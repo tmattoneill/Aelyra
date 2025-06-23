@@ -14,13 +14,13 @@ router = APIRouter()
 # In-memory storage for state (use Redis in production)
 oauth_states = {}
 
-@router.get("/spotify", response_model=AuthResponse)
+@router.get("/", response_model=AuthResponse)
 async def spotify_auth():
     """
     Initiate Spotify OAuth flow
     """
     client_id = os.getenv("SPOTIFY_CLIENT_ID")
-    redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI", "http://localhost:5000/api/auth/callback")
+    redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI", "https://localhost:5988/api/spotify/callback")
     
     if not client_id:
         raise HTTPException(status_code=500, detail="Spotify client ID not configured")
@@ -66,7 +66,7 @@ async def spotify_callback(code: str = None, state: str = None, error: str = Non
     # Exchange code for access token
     client_id = os.getenv("SPOTIFY_CLIENT_ID")
     client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
-    redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI", "http://localhost:5000/api/auth/callback")
+    redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI", "https://localhost:5988/api/spotify/callback")
     
     if not client_id or not client_secret:
         raise HTTPException(status_code=500, detail="Spotify credentials not configured")
@@ -96,11 +96,12 @@ async def spotify_callback(code: str = None, state: str = None, error: str = Non
         response.raise_for_status()
         token_info = response.json()
         
-        return CallbackResponse(
-            access_token=token_info["access_token"],
-            refresh_token=token_info.get("refresh_token"),
-            expires_in=token_info["expires_in"]
-        )
+        # Redirect back to frontend with token
+        frontend_url = f"http://localhost:3000/?access_token={token_info['access_token']}&expires_in={token_info['expires_in']}"
+        if token_info.get("refresh_token"):
+            frontend_url += f"&refresh_token={token_info['refresh_token']}"
+        
+        return RedirectResponse(url=frontend_url)
         
     except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=f"Failed to exchange code for token: {str(e)}")

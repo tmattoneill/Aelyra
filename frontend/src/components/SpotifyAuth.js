@@ -9,8 +9,7 @@ const SpotifyAuth = ({ onAuthSuccess }) => {
   useEffect(() => {
     // Check for auth callback
     const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get('code');
-    const state = urlParams.get('state');
+    const accessToken = urlParams.get('access_token');
     const error = urlParams.get('error');
 
     if (error) {
@@ -18,22 +17,13 @@ const SpotifyAuth = ({ onAuthSuccess }) => {
       return;
     }
 
-    if (code && state) {
-      handleCallback(code, state);
+    if (accessToken) {
+      // Clear URL parameters and call success handler
+      window.history.replaceState({}, document.title, window.location.pathname);
+      onAuthSuccess(accessToken);
     }
   }, []);
 
-  const handleCallback = async (code, state) => {
-    setLoading(true);
-    try {
-      const response = await axios.get(`/api/spotify/callback?code=${code}&state=${state}`);
-      onAuthSuccess(response.data.access_token);
-    } catch (err) {
-      setError('Failed to complete Spotify authentication');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const initiateAuth = async () => {
     setLoading(true);
