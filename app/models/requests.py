@@ -4,7 +4,7 @@ from typing import Optional
 
 class GeneratePlaylistRequest(BaseModel):
     query: str
-    openai_api_key: str
+    openai_api_key: Optional[str] = None
     spotify_access_token: str
 
 class SearchTracksRequest(BaseModel):

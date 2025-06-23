@@ -1,15 +1,15 @@
-
 import openai
-from typing import List, Dict
 import json
 import logging
+import os
+from typing import List, Dict
 
 logger = logging.getLogger(__name__)
 
 class OpenAIService:
     def __init__(self, api_key: str):
         self.client = openai.OpenAI(api_key=api_key)
-    
+
     async def generate_track_suggestions(self, query: str) -> List[Dict[str, str]]:
         """
         Generate track suggestions based on natural language query
@@ -30,7 +30,7 @@ Example format:
 
 Query: {query}
 """
-            
+
             response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
@@ -40,30 +40,30 @@ Query: {query}
                 temperature=0.7,
                 max_tokens=1000
             )
-            
+
             content = response.choices[0].message.content.strip()
-            
+
             # Parse JSON response
             try:
                 tracks = json.loads(content)
                 if not isinstance(tracks, list):
                     raise ValueError("Response is not a list")
-                
+
                 # Validate structure
                 for track in tracks:
                     if not isinstance(track, dict) or "title" not in track or "artist" not in track:
                         raise ValueError("Invalid track structure")
-                
+
                 return tracks
-                
+
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse OpenAI response as JSON: {content}")
                 raise Exception("Failed to parse AI response")
-                
+
         except Exception as e:
             logger.error(f"OpenAI API error: {str(e)}")
             raise Exception(f"Failed to generate track suggestions: {str(e)}")
-    
+
     async def generate_playlist_title(self, query: str) -> str:
         """
         Generate a playlist title based on the user query
@@ -83,7 +83,7 @@ Examples:
 
 Query: {query}
 """
-            
+
             response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
@@ -93,14 +93,14 @@ Query: {query}
                 temperature=0.8,
                 max_tokens=50
             )
-            
+
             title = response.choices[0].message.content.strip()
-            
+
             # Clean up title (remove quotes if present)
             title = title.strip('"').strip("'")
-            
+
             return title
-            
+
         except Exception as e:
             logger.error(f"Failed to generate playlist title: {str(e)}")
             # Fallback to a simple title
