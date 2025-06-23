@@ -7,8 +7,12 @@ from typing import List, Dict
 logger = logging.getLogger(__name__)
 
 class OpenAIService:
-    def __init__(self, api_key: str):
-        self.client = openai.OpenAI(api_key=api_key)
+    def __init__(self, api_key: str = None):
+        # Use provided API key or fall back to environment variable
+        final_api_key = api_key or os.getenv("OPENAI_API_KEY")
+        if not final_api_key:
+            raise ValueError("OpenAI API key not provided and not found in environment variables")
+        self.client = openai.OpenAI(api_key=final_api_key)
 
     async def generate_track_suggestions(self, query: str) -> List[Dict[str, str]]:
         """

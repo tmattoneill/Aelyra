@@ -17,7 +17,7 @@ async def generate_playlist(request: GeneratePlaylistRequest):
     Main endpoint: Generate a playlist based on natural language query
     """
     try:
-        # Initialize services
+        # Initialize services (OpenAI API key is optional, will use env var as fallback)
         openai_service = OpenAIService(request.openai_api_key)
         spotify_service = SpotifyService(request.spotify_access_token)
         
