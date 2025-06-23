@@ -1,5 +1,5 @@
 entrypoint = "main.py"
-modules = ["python-3.11"]
+modules = ["nodejs-20", "python-3.11"]
 
 [nix]
 channel = "stable-24_05"
@@ -26,6 +26,15 @@ mode = "sequential"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python main.py"
+
+[[workflows.workflow]]
+name = "Start Frontend"
+author = 3917583
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd frontend && npm start"
 
 [[ports]]
 localPort = 5000

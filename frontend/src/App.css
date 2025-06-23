@@ -1,0 +1,212 @@
+
+.App {
+  text-align: center;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.App-header {
+  background: linear-gradient(135deg, #1db954, #1ed760);
+  color: white;
+  padding: 2rem;
+  border-radius: 10px;
+  margin-bottom: 2rem;
+}
+
+.App-header h1 {
+  margin: 0;
+  font-size: 2.5rem;
+}
+
+.App-header p {
+  margin: 0.5rem 0 0 0;
+  opacity: 0.9;
+}
+
+.App-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.auth-section {
+  background: white;
+  padding: 2rem;
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+}
+
+.auth-button {
+  background: #1db954;
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 25px;
+  font-size: 1rem;
+  cursor: pointer;
+  margin-bottom: 1rem;
+  transition: background-color 0.3s;
+}
+
+.auth-button:hover {
+  background: #1ed760;
+}
+
+.token-input {
+  width: 100%;
+  max-width: 500px;
+  padding: 12px;
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.generator-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.input-section {
+  background: white;
+  padding: 2rem;
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+}
+
+.query-input {
+  width: 100%;
+  max-width: 600px;
+  padding: 15px;
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  font-size: 1rem;
+  resize: vertical;
+  margin-bottom: 1rem;
+}
+
+.query-input:focus {
+  outline: none;
+  border-color: #1db954;
+}
+
+.generate-button {
+  background: #1db954;
+  color: white;
+  border: none;
+  padding: 15px 30px;
+  border-radius: 25px;
+  font-size: 1.1rem;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.generate-button:hover:not(:disabled) {
+  background: #1ed760;
+}
+
+.generate-button:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+.error-message {
+  background: #ff4444;
+  color: white;
+  padding: 1rem;
+  border-radius: 8px;
+  margin: 1rem 0;
+}
+
+.playlist-results {
+  background: white;
+  padding: 2rem;
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+}
+
+.playlist-results h2 {
+  color: #1db954;
+  margin-bottom: 2rem;
+}
+
+.tracks-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.track-card {
+  display: flex;
+  align-items: center;
+  background: #f9f9f9;
+  padding: 1rem;
+  border-radius: 8px;
+  text-align: left;
+}
+
+.album-art {
+  width: 60px;
+  height: 60px;
+  border-radius: 4px;
+  margin-right: 1rem;
+  object-fit: cover;
+}
+
+.track-info {
+  flex: 1;
+}
+
+.track-info h4 {
+  margin: 0 0 0.25rem 0;
+  font-size: 1rem;
+  color: #333;
+}
+
+.track-info p {
+  margin: 0 0 0.5rem 0;
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.preview-audio {
+  width: 100%;
+  height: 30px;
+}
+
+.create-playlist-button {
+  background: #1db954;
+  color: white;
+  border: none;
+  padding: 15px 30px;
+  border-radius: 25px;
+  font-size: 1.2rem;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.create-playlist-button:hover:not(:disabled) {
+  background: #1ed760;
+}
+
+.create-playlist-button:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+  .tracks-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .track-card {
+    flex-direction: column;
+    text-align: center;
+  }
+  
+  .album-art {
+    margin: 0 0 1rem 0;
+  }
+}
