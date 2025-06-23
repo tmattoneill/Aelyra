@@ -28,7 +28,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(playlist.router, prefix="/api")
-app.include_router(auth.router, prefix="/api/auth")
+app.include_router(auth.router, prefix="/api/spotify")
 
 @app.get("/")
 async def root():
