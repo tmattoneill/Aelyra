@@ -16,7 +16,7 @@ run = ["python3", "main.py"]
 deploymentTarget = "cloudrun"
 
 [workflows]
-runButton = "Run API Server"
+runButton = "Full Stack"
 
 [[workflows.workflow]]
 name = "Run API Server"
@@ -31,6 +31,19 @@ args = "python main.py"
 name = "Start Frontend"
 author = 3917583
 mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd frontend && npm start"
+
+[[workflows.workflow]]
+name = "Full Stack"
+author = 3917583
+mode = "parallel"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python main.py"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
