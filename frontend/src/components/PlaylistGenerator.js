@@ -10,6 +10,8 @@ const PlaylistGenerator = ({ spotifyToken, onLogout }) => {
   const [playlistName, setPlaylistName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [rawAiResponse, setRawAiResponse] = useState('');
+  const [showRawResponse, setShowRawResponse] = useState(false);
   const [success, setSuccess] = useState('');
   const [step, setStep] = useState('input'); // 'input', 'generated', 'created'
 
@@ -35,7 +37,18 @@ const PlaylistGenerator = ({ spotifyToken, onLogout }) => {
       setSelectedTracks(new Set(response.data.tracks.map(track => track.spotify_id)));
       setStep('generated');
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to generate playlist');
+      const errorDetail = err.response?.data?.detail || 'Failed to generate playlist';
+      
+      // Check if this is an AI parsing error with raw response
+      if (errorDetail.includes('Failed to parse AI response|RAW_RESPONSE:')) {
+        const [errorMsg, rawResponse] = errorDetail.split('|RAW_RESPONSE:');
+        setError(errorMsg);
+        setRawAiResponse(rawResponse);
+      } else {
+        setError(errorDetail);
+        setRawAiResponse('');
+      }
+      setShowRawResponse(false);
     } finally {
       setLoading(false);
     }
@@ -156,7 +169,44 @@ const PlaylistGenerator = ({ spotifyToken, onLogout }) => {
             </small>
           </div>
 
-          {error && <div className="error">{error}</div>}
+          {error && (
+            <div className="error">
+              {error}
+              {rawAiResponse && (
+                <div style={{ marginTop: '10px' }}>
+                  <button 
+                    onClick={() => setShowRawResponse(!showRawResponse)}
+                    style={{ 
+                      background: 'none', 
+                      border: '1px solid #ccc', 
+                      padding: '5px 10px', 
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      fontSize: '12px'
+                    }}
+                  >
+                    {showRawResponse ? 'Hide' : 'Show'} AI Response
+                  </button>
+                  {showRawResponse && (
+                    <div style={{ 
+                      marginTop: '10px', 
+                      padding: '10px', 
+                      backgroundColor: '#f5f5f5', 
+                      border: '1px solid #ddd',
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      fontFamily: 'monospace',
+                      whiteSpace: 'pre-wrap',
+                      maxHeight: '200px',
+                      overflow: 'auto'
+                    }}>
+                      {rawAiResponse}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           <button className="btn" onClick={generatePlaylist}>
             Generate Playlist 🎵
@@ -218,7 +268,44 @@ const PlaylistGenerator = ({ spotifyToken, onLogout }) => {
               {selectedTracks.size} of {tracks.length} tracks selected
             </p>
             
-            {error && <div className="error">{error}</div>}
+            {error && (
+              <div className="error">
+                {error}
+                {rawAiResponse && (
+                  <div style={{ marginTop: '10px' }}>
+                    <button 
+                      onClick={() => setShowRawResponse(!showRawResponse)}
+                      style={{ 
+                        background: 'none', 
+                        border: '1px solid #ccc', 
+                        padding: '5px 10px', 
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '12px'
+                      }}
+                    >
+                      {showRawResponse ? 'Hide' : 'Show'} AI Response
+                    </button>
+                    {showRawResponse && (
+                      <div style={{ 
+                        marginTop: '10px', 
+                        padding: '10px', 
+                        backgroundColor: '#f5f5f5', 
+                        border: '1px solid #ddd',
+                        borderRadius: '4px',
+                        fontSize: '12px',
+                        fontFamily: 'monospace',
+                        whiteSpace: 'pre-wrap',
+                        maxHeight: '200px',
+                        overflow: 'auto'
+                      }}>
+                        {rawAiResponse}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
             
             <button className="btn" onClick={createPlaylist} disabled={selectedTracks.size === 0}>
               Create Playlist in Spotify
