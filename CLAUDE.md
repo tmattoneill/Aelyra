@@ -8,44 +8,32 @@ PlayMaker is an AI-powered Spotify playlist generator with a FastAPI Python back
 
 ## Development Commands
 
-### SSL Certificate Setup (First Time Only)
-```bash
-# Generate SSL certificates for local HTTPS development
-mkdir -p certs
-cd certs
-mkcert localhost 127.0.0.1 ::1
-
-# Install CA in system trust store (REQUIRED for browser trust)
-# Option 1: Automatic (requires sudo password)
-mkcert -install
-
-# Option 2: Manual installation if automatic fails
-# Run the helper script and follow instructions:
-./install-ca.sh
-
-# Option 3: Manual via Keychain Access
-# 1. Open Keychain Access app
-# 2. Drag the rootCA.pem file (found via `mkcert -CAROOT`) into System keychain
-# 3. Double-click the certificate and set to "Always Trust"
-```
-
-**Important**: The CA certificate MUST be installed and trusted for HTTPS to work without browser warnings. This is required for Spotify OAuth authentication.
-
 ### Backend (Python)
 ```bash
-# Run development server with HTTPS
+# Install dependencies
+pip install fastapi "uvicorn[standard]" pydantic requests python-dotenv openai
+
+# Run development server (HTTP on 127.0.0.1 for Spotify OAuth compatibility)
 python main.py
 
 # Alternative using uvicorn directly
-uvicorn main:app --host 0.0.0.0 --port 5988 --reload --ssl-keyfile=./certs/localhost+2-key.pem --ssl-certfile=./certs/localhost+2.pem
+uvicorn main:app --host 127.0.0.1 --port 5988 --reload
 ```
 
 ### Frontend (React)
 ```bash
 cd frontend
-npm start      # Development server with HTTPS (port 3000)
+npm install    # Install dependencies
+npm start      # Development server (port 3000)
 npm run build  # Production build
 npm test       # Run tests
+```
+
+### Environment Setup
+```bash
+# Copy environment template and configure
+cp .env.example .env
+# Edit .env with your Spotify and OpenAI API credentials
 ```
 
 ## Architecture
@@ -74,30 +62,40 @@ npm test       # Run tests
 
 ## Important Implementation Details
 
+### Spotify OAuth Requirements
+- **HTTP Loopback Only**: Spotify requires `http://127.0.0.1` (not `localhost`) for local development
+- **Redirect URI**: Must be exactly `http://127.0.0.1:5988/api/spotify/callback` in Spotify app settings
+- Backend exchanges authorization code for access token, then redirects to frontend with token
+
 ### Authentication Flow
-1. Frontend initiates OAuth via `/api/spotify`
-2. Backend generates secure state parameter (stored in-memory)
-3. User authorizes on Spotify
-4. Callback validates state and exchanges code for access token
-5. Access token used for subsequent Spotify API calls
+1. Frontend calls `/api/spotify` → Gets Spotify authorization URL
+2. User authorizes on Spotify → Redirected to backend callback
+3. Backend exchanges code for access token → Redirects to frontend with token in URL params
+4. Frontend extracts token from URL and stores in React state (session-based)
+
+### AI Response Processing
+- OpenAI service automatically strips markdown formatting from AI responses
+- Handles both raw JSON and markdown-wrapped JSON (```json blocks)
+- Enhanced error handling shows expandable raw AI response when parsing fails
 
 ### Track Alternative System
-The app provides 4 alternative tracks for each AI suggestion. Users can swap tracks using a sophisticated selection system implemented with JavaScript Sets for performance.
+Each AI suggestion includes up to 4 alternative tracks from Spotify search results. Frontend uses JavaScript Sets for efficient track selection management.
 
 ### Environment Variables Required
 ```bash
 SPOTIFY_CLIENT_ID=your_spotify_client_id
 SPOTIFY_CLIENT_SECRET=your_spotify_client_secret  
-SPOTIFY_REDIRECT_URI=https://localhost:5988/api/spotify/callback
+SPOTIFY_REDIRECT_URI=http://127.0.0.1:5988/api/spotify/callback
 OPENAI_API_KEY=your_openai_api_key
+DEBUG=True
 ```
 
 ### Development Setup
-- **HTTPS Required**: Both servers run with HTTPS for Spotify OAuth authentication
-- Backend runs on port 5988 with hot reload and SSL (`https://localhost:5988`)
-- Frontend runs on port 3000 with HTTPS and proxy to backend (`"proxy": "https://localhost:5988"`)
-- SSL certificates generated with mkcert and stored in `./certs/` directory
-- Uses uv for Python package management (see `uv.lock`)
+- **HTTP Development**: Uses HTTP with loopback IP (127.0.0.1) for Spotify OAuth compatibility
+- Backend runs on `http://127.0.0.1:5988` with hot reload
+- Frontend runs on `http://localhost:3000` with proxy to backend
+- No SSL certificates required for development
+- Standard pip for Python package management
 
 ## Key Dependencies
 
@@ -111,8 +109,27 @@ OPENAI_API_KEY=your_openai_api_key
 - React 18.2.0 with Create React App
 - Axios for API communication
 
+## Key Implementation Notes
+
+### Error Handling
+- AI parsing errors include expandable "Show AI Response" button to view raw OpenAI output
+- Frontend handles both standard errors and special AI parsing error format
+- Backend includes raw AI response in error message when JSON parsing fails
+
+### Session Management
+- Spotify tokens stored in browser memory only (lost on page refresh)
+- OAuth state stored in-memory on backend (use Redis for production)
+- No persistent user sessions or data storage
+
+### Common Development Issues
+- **"INVALID_CLIENT: Insecure redirect URI"**: Ensure Spotify redirect URI uses `http://127.0.0.1:5988/api/spotify/callback` (not localhost)
+- **"Failed to parse AI response"**: Click "Show AI Response" to see raw OpenAI output; usually caused by non-JSON AI responses
+- **Frontend connection errors**: Verify backend is running on `127.0.0.1:5988` and frontend proxy is configured correctly
+
 ## Production Considerations
 
-- CORS is currently set to allow all origins (`allow_origins=["*"]`) - needs hardening
-- OAuth state is stored in-memory - should use Redis or database for production
-- No rate limiting implemented on API endpoints
+- CORS currently allows all origins - needs hardening for production
+- No rate limiting on API endpoints
+- HTTP-only development setup requires HTTPS implementation for production
+- In-memory OAuth state storage needs Redis/database replacement
+- No persistent storage for playlists or user data
