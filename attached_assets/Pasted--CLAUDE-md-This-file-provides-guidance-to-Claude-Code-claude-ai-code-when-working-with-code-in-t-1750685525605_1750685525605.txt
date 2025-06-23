@@ -1,0 +1,194 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+**PlayMaker** - AI-Powered Spotify Playlist Generator
+
+### Mission
+Allow users to build new Spotify playlists by entering natural language queries. The application connects to an LLM to generate track suggestions, then uses the Spotify API to create the actual playlist with an auto-generated title based on the user's query.
+
+### Example User Flow
+1. User enters: "Upbeat songs for a morning workout"
+2. LLM generates list of 10-15 track suggestions in JSON format
+3. App searches Spotify for each track (returns up to 5 matches per track)
+4. User confirms track selections (shows album art as cards)
+5. App creates new Spotify playlist with generated title like "Morning Workout Energy"
+
+## Tech Stack
+
+### Backend
+- **FastAPI** (Python) - Primary API framework
+- **Spotify Web API** - Track search and playlist creation
+- **OpenAI/ChatGPT API** - Natural language playlist generation
+
+### Frontend  
+- **React** - User interface
+- **Spotify Web Playback SDK** (future consideration)
+
+### Authentication
+- **Spotify OAuth 2.0** - User account access for playlist creation
+- **OpenAI API Key** - LLM access (user-provided for MVP)
+
+## Project Architecture
+
+```
+project-root/
+├── backend/                 # FastAPI application
+│   ├── app/
+│   │   ├── main.py         # FastAPI app entry point
+│   │   ├── routers/        # API route handlers
+│   │   ├── services/       # Business logic (Spotify, OpenAI)
+│   │   ├── models/         # Pydantic models
+│   │   └── auth/           # Authentication handlers
+│   ├── requirements.txt
+│   └── .env.example
+├── frontend/               # React application (Phase 2)
+│   ├── src/
+│   ├── public/
+│   └── package.json
+└── docs/                   # API documentation
+```
+
+## Development Phases
+
+### Phase 1: Backend API (Current Focus)
+Build and test FastAPI backend with curl/Postman before frontend development.
+
+**Core Endpoints:**
+- `POST /api/generate-playlist` - Main playlist generation endpoint
+- `GET /api/auth/spotify` - Spotify OAuth initiation
+- `GET /api/auth/callback` - Spotify OAuth callback
+- `GET /api/search-tracks` - Search Spotify for specific tracks
+- `POST /api/create-playlist` - Create playlist in user's Spotify account
+
+### Phase 2: Frontend Integration
+React frontend consuming the FastAPI backend.
+
+### Phase 3: Enhancements
+Multi-user sessions, persistence, advanced features.
+
+## API Specifications
+
+### Primary Endpoint: Generate Playlist
+
+```http
+POST /api/generate-playlist
+Content-Type: application/json
+
+{
+  "query": "Chill songs for studying late at night",
+  "openai_api_key": "sk-...",
+  "spotify_access_token": "BQC..."
+}
+```
+
+**Response:**
+```json
+{
+  "playlist_id": "37i9dQZF1DX0XUsuxWHRQd",
+  "playlist_name": "Late Night Study Chill",
+  "tracks": [
+    {
+      "title": "Weightless",
+      "artist": "Marconi Union", 
+      "spotify_id": "2WfaOiMkCvy7F5fcp2zZ8L",
+      "album_art": "https://i.scdn.co/image/...",
+      "preview_url": "https://p.scdn.co/...",
+      "alternatives": [...]
+    }
+  ]
+}
+```
+
+## External API Integration
+
+### Spotify Web API
+- **Search**: https://developer.spotify.com/documentation/web-api/reference/search
+- **Create Playlist**: https://developer.spotify.com/documentation/web-api/reference/create-playlist  
+- **Add Tracks**: https://developer.spotify.com/documentation/web-api/reference/add-tracks-to-playlist
+
+### OpenAI API
+- Model: GPT-4 or GPT-3.5-turbo
+- Response format: JSON only
+- Prompt engineering for consistent track suggestions
+
+## Development Commands
+
+### Backend Setup
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
+
+### Testing
+```bash
+# Run backend tests
+pytest
+
+# Test with curl
+curl -X POST "http://localhost:8000/api/generate-playlist" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "upbeat morning songs", "openai_api_key": "sk-...", "spotify_access_token": "BQC..."}'
+```
+
+### Environment Variables
+Create `.env` file in backend directory:
+```
+SPOTIFY_CLIENT_ID=your_client_id
+SPOTIFY_CLIENT_SECRET=your_client_secret
+SPOTIFY_REDIRECT_URI=http://localhost:8000/api/auth/callback
+OPENAI_API_KEY=your_openai_key  # Optional, can be user-provided
+```
+
+## MVP Constraints & Features
+
+### MVP Limitations
+- **No persistence** - Each session is independent
+- **No multi-user support** - Single user per instance
+- **User-provided OpenAI key** - No built-in LLM access
+- **Basic UI** - Focus on functionality over design
+
+### MVP Features
+- ✅ Natural language playlist generation
+- ✅ Spotify OAuth integration
+- ✅ Track confirmation with alternatives (up to 5 per track)
+- ✅ Album art display for track selection
+- ✅ Automatic playlist creation in user's Spotify account
+- ✅ Auto-generated playlist titles
+
+## Testing Strategy
+
+### Backend Testing (Phase 1)
+1. **Unit tests** for individual services (Spotify, OpenAI)
+2. **Integration tests** for full playlist generation flow
+3. **Manual testing** with Postman/curl for API endpoints
+4. **OAuth flow testing** with real Spotify developer account
+
+### Sample Test Cases
+- Valid natural language queries
+- Invalid/empty queries
+- Spotify API rate limiting
+- OpenAI API failures
+- Authentication edge cases
+
+## Known Considerations
+
+- **Rate Limiting**: Both Spotify and OpenAI APIs have rate limits
+- **Error Handling**: Graceful degradation when APIs are unavailable
+- **Track Matching**: LLM suggestions may not exactly match Spotify catalog
+- **User Experience**: Balance between automation and user control
+- **Cost Management**: OpenAI API costs scale with usage
+
+## Future Enhancements
+
+- User accounts and playlist history
+- Collaborative playlists
+- Advanced filtering (genre, era, mood)
+- Spotify playlist analysis and suggestions
+- Social sharing features
+- Mobile app version
