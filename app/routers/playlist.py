@@ -67,6 +67,27 @@ async def search_tracks(q: str, spotify_access_token: str):
         logger.error(f"Error searching tracks: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/user-info")
+async def get_user_info(spotify_access_token: str):
+    """
+    Get user profile information and validate token
+    """
+    try:
+        spotify_service = SpotifyService(spotify_access_token)
+        user_profile = await spotify_service.get_user_profile()
+        return {
+            "id": user_profile["id"],
+            "display_name": user_profile.get("display_name", user_profile["id"]),
+            "email": user_profile.get("email"),
+            "images": user_profile.get("images", [])
+        }
+    except Exception as e:
+        logger.error(f"Error getting user info: {str(e)}")
+        # Check if it's a token-related error
+        if "401" in str(e) or "403" in str(e) or "Bad Request" in str(e):
+            raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/create-playlist")
 async def create_playlist(request: CreatePlaylistRequest):
     """
@@ -75,7 +96,7 @@ async def create_playlist(request: CreatePlaylistRequest):
     try:
         spotify_service = SpotifyService(request.spotify_access_token)
         
-        # Get user ID first
+        # Get user ID first - this will fail if token is expired
         user_profile = await spotify_service.get_user_profile()
         user_id = user_profile["id"]
         
@@ -98,4 +119,7 @@ async def create_playlist(request: CreatePlaylistRequest):
         
     except Exception as e:
         logger.error(f"Error creating playlist: {str(e)}")
+        # Check if it's a token-related error
+        if "401" in str(e) or "403" in str(e) or "Bad Request" in str(e):
+            raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
         raise HTTPException(status_code=500, detail=str(e))

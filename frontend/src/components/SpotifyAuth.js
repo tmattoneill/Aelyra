@@ -18,11 +18,21 @@ const SpotifyAuth = ({ onAuthSuccess }) => {
     }
 
     if (accessToken) {
-      // Clear URL parameters and call success handler
+      // Clear URL parameters and fetch user info
       window.history.replaceState({}, document.title, window.location.pathname);
-      onAuthSuccess(accessToken);
+      fetchUserInfo(accessToken);
     }
   }, []);
+
+  const fetchUserInfo = async (token) => {
+    try {
+      const response = await axios.get(`/api/user-info?spotify_access_token=${token}`);
+      onAuthSuccess(token, response.data);
+    } catch (err) {
+      setError('Failed to fetch user information');
+      console.error('User info fetch error:', err);
+    }
+  };
 
 
   const initiateAuth = async () => {

@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 
-const PlaylistGenerator = ({ spotifyToken, onLogout }) => {
+const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired }) => {
   const [query, setQuery] = useState('');
   const [openaiKey, setOpenaiKey] = useState('');
   const [tracks, setTracks] = useState([]);
@@ -14,6 +14,13 @@ const PlaylistGenerator = ({ spotifyToken, onLogout }) => {
   const [showRawResponse, setShowRawResponse] = useState(false);
   const [success, setSuccess] = useState('');
   const [step, setStep] = useState('input'); // 'input', 'generated', 'created'
+
+  // Helper function to check if error is token expiration
+  const isTokenExpiredError = (error) => {
+    return error.response?.status === 401 || 
+           error.response?.data?.detail?.includes('token expired') ||
+           error.response?.data?.detail?.includes('token expired or invalid');
+  };
 
   const generatePlaylist = async () => {
     if (!query.trim()) {
@@ -74,6 +81,10 @@ const PlaylistGenerator = ({ spotifyToken, onLogout }) => {
       setSuccess(`Playlist "${playlistName}" created successfully! You can find it in your Spotify account.`);
       setStep('created');
     } catch (err) {
+      if (isTokenExpiredError(err)) {
+        onTokenExpired();
+        return;
+      }
       setError(err.response?.data?.detail || 'Failed to create playlist');
     } finally {
       setLoading(false);
@@ -129,7 +140,12 @@ const PlaylistGenerator = ({ spotifyToken, onLogout }) => {
 
   return (
     <div>
-      <div style={{ textAlign: 'right', marginBottom: '20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+        <div style={{ color: '#1db954', fontWeight: '500' }}>
+          {userInfo?.display_name && (
+            <>Hello, {userInfo.display_name}! 👋</>
+          )}
+        </div>
         <button className="btn btn-secondary" onClick={onLogout}>
           Disconnect Spotify
         </button>

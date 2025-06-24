@@ -6,15 +6,24 @@ import './index.css';
 
 function App() {
   const [spotifyToken, setSpotifyToken] = useState(null);
+  const [userInfo, setUserInfo] = useState(null);
   const [step, setStep] = useState(1);
 
-  const handleAuthSuccess = (token) => {
+  const handleAuthSuccess = (token, user) => {
     setSpotifyToken(token);
+    setUserInfo(user);
     setStep(2);
   };
 
   const handleLogout = () => {
     setSpotifyToken(null);
+    setUserInfo(null);
+    setStep(1);
+  };
+
+  const handleTokenExpired = () => {
+    setSpotifyToken(null);
+    setUserInfo(null);
     setStep(1);
   };
 
@@ -40,8 +49,10 @@ function App() {
         <SpotifyAuth onAuthSuccess={handleAuthSuccess} />
       ) : (
         <PlaylistGenerator 
-          spotifyToken={spotifyToken} 
+          spotifyToken={spotifyToken}
+          userInfo={userInfo}
           onLogout={handleLogout}
+          onTokenExpired={handleTokenExpired}
         />
       )}
     </div>
