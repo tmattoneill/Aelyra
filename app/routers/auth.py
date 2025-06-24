@@ -20,10 +20,13 @@ async def spotify_auth():
     Initiate Spotify OAuth flow
     """
     client_id = os.getenv("SPOTIFY_CLIENT_ID")
-    redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI", "https://localhost:5988/api/spotify/callback")
+    redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI")
     
     if not client_id:
         raise HTTPException(status_code=500, detail="Spotify client ID not configured")
+    
+    if not redirect_uri:
+        raise HTTPException(status_code=500, detail="Spotify redirect URI not configured")
     
     # Generate random state for security
     state = secrets.token_urlsafe(32)
@@ -66,10 +69,13 @@ async def spotify_callback(code: str = None, state: str = None, error: str = Non
     # Exchange code for access token
     client_id = os.getenv("SPOTIFY_CLIENT_ID")
     client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
-    redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI", "https://localhost:5988/api/spotify/callback")
+    redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI")
     
     if not client_id or not client_secret:
         raise HTTPException(status_code=500, detail="Spotify credentials not configured")
+    
+    if not redirect_uri:
+        raise HTTPException(status_code=500, detail="Spotify redirect URI not configured")
     
     # Prepare authorization header
     auth_string = f"{client_id}:{client_secret}"

@@ -30,8 +30,17 @@ function App() {
   return (
     <div className="container">
       <div className="header">
-        <h1>PlayMaker</h1>
-        <p>AI-Powered Spotify Playlist Generator</p>
+          <img 
+              src="/images/aelyra_logo_1024x1024.png" 
+              alt="Aleyra Logo" 
+              style={{
+                width: '200px',
+                height: '200px',
+                marginRight: '20px',
+                objectFit: 'contain'
+              }}
+          />
+        <p>Create the Perect Playlilst Together</p>
       </div>
 
       <div className="steps">
