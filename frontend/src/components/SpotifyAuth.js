@@ -60,29 +60,65 @@ const SpotifyAuth = ({ onAuthSuccess }) => {
   }
 
   return (
-    <div className="card">
-      <h2>Connect Your Spotify Account</h2>
-      <p style={{ marginBottom: '20px', color: '#666' }}>
-        To create playlists, we need access to your Spotify account. 
-        This allows us to search for songs and create playlists on your behalf.
-      </p>
-      
-      {error && <div className="error">{error}</div>}
-      
-      <button 
-        className="btn" 
-        onClick={initiateAuth}
-        disabled={loading}
-      >
-        {loading ? 'Connecting...' : 'Connect Spotify Account'}
-      </button>
-      
-      <div style={{ marginTop: '20px', fontSize: '14px', color: '#666' }}>
-        <strong>Permissions we'll request:</strong>
-        <ul style={{ marginTop: '10px', paddingLeft: '20px' }}>
-          <li>Create and modify playlists</li>
-          <li>Access your profile information</li>
-        </ul>
+    <div>
+      <div className="card" style={{ marginBottom: '20px' }}>
+        <h2>How It Works</h2>
+        <div style={{ color: '#B3B3B3', fontSize: '16px', lineHeight: '1.6' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px', marginTop: '20px' }}>
+            <div>
+              <div style={{ color: '#1BD760', fontWeight: '600', marginBottom: '8px' }}>1. Connect Spotify</div>
+              <p>Securely connect your Spotify account to allow playlist creation</p>
+            </div>
+            <div>
+              <div style={{ color: '#1BD760', fontWeight: '600', marginBottom: '8px' }}>2. Describe Your Playlist</div>
+              <p>Tell us what kind of music you want in natural language</p>
+            </div>
+            <div>
+              <div style={{ color: '#1BD760', fontWeight: '600', marginBottom: '8px' }}>3. Review & Customize</div>
+              <p>Choose from AI-generated tracks and alternative suggestions</p>
+            </div>
+            <div>
+              <div style={{ color: '#1BD760', fontWeight: '600', marginBottom: '8px' }}>4. Create Playlist</div>
+              <p>Your custom playlist is automatically created in Spotify</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <h2>Connect Your Spotify Account</h2>
+        <p style={{ marginBottom: '20px', color: '#B3B3B3' }}>
+          To get started, connect your Spotify account. We'll use AI to generate personalized playlists based on your preferences.
+        </p>
+        
+        {error && <div className="error">{error}</div>}
+        
+        <button 
+          className="btn" 
+          onClick={initiateAuth}
+          disabled={loading}
+        >
+          {loading ? 'Connecting...' : 'Connect Spotify Account'}
+        </button>
+        
+        <div style={{ marginTop: '25px', padding: '20px', background: '#181818', borderRadius: '6px', border: '1px solid #404040' }}>
+          <div style={{ color: '#EFEFEF', fontWeight: '600', marginBottom: '12px' }}>What You Can Create:</div>
+          <ul style={{ color: '#B3B3B3', paddingLeft: '20px', lineHeight: '1.8' }}>
+            <li>"Upbeat songs for a morning workout"</li>
+            <li>"Chill indie songs for studying"</li>
+            <li>"Classic rock anthems from the 80s"</li>
+            <li>"Sad songs for rainy days"</li>
+            <li>"Party music with heavy bass"</li>
+          </ul>
+        </div>
+
+        <div style={{ marginTop: '20px', fontSize: '14px', color: '#B3B3B3' }}>
+          <strong style={{ color: '#EFEFEF' }}>Permissions Required:</strong>
+          <ul style={{ marginTop: '8px', paddingLeft: '20px' }}>
+            <li>Create and modify playlists</li>
+            <li>Access your profile information</li>
+          </ul>
+        </div>
       </div>
     </div>
   );

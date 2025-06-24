@@ -30,7 +30,7 @@ function App() {
   return (
     <div className="container">
       <div className="header">
-        <h1>🎵 PlayMaker</h1>
+        <h1>PlayMaker</h1>
         <p>AI-Powered Spotify Playlist Generator</p>
       </div>
 

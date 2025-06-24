@@ -11,8 +11,9 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #191919;
   min-height: 100vh;
+  color: #EFEFEF;
 }
 
 .container {
@@ -24,26 +25,28 @@ body {
 .header {
   text-align: center;
   margin-bottom: 40px;
-  color: white;
+  color: #EFEFEF;
 }
 
 .header h1 {
   font-size: 3rem;
   margin-bottom: 10px;
-  text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+  color: #1BD760;
+  font-weight: 700;
 }
 
 .header p {
   font-size: 1.2rem;
-  opacity: 0.9;
+  color: #B3B3B3;
 }
 
 .card {
-  background: white;
-  border-radius: 15px;
+  background: #282828;
+  border-radius: 8px;
   padding: 30px;
   margin-bottom: 30px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  border: 1px solid #404040;
 }
 
 .form-group {
@@ -54,21 +57,27 @@ body {
   display: block;
   margin-bottom: 8px;
   font-weight: 600;
-  color: #333;
+  color: #EFEFEF;
 }
 
 .form-input {
   width: 100%;
   padding: 12px 15px;
-  border: 2px solid #e1e5e9;
-  border-radius: 8px;
+  border: 1px solid #535353;
+  border-radius: 4px;
   font-size: 16px;
+  background: #3E3E3E;
+  color: #EFEFEF;
   transition: border-color 0.3s ease;
 }
 
 .form-input:focus {
   outline: none;
-  border-color: #667eea;
+  border-color: #1BD760;
+}
+
+.form-input::placeholder {
+  color: #B3B3B3;
 }
 
 .textarea {
@@ -77,21 +86,22 @@ body {
 }
 
 .btn {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+  background: #1BD760;
+  color: #000;
   border: none;
   padding: 12px 30px;
-  border-radius: 8px;
+  border-radius: 50px;
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
   transition: all 0.3s ease;
   margin-right: 10px;
+  text-transform: none;
 }
 
 .btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+  background: #1ED760;
+  transform: scale(1.04);
 }
 
 .btn:disabled {
@@ -101,31 +111,39 @@ body {
 }
 
 .btn-secondary {
-  background: #6c757d;
+  background: transparent;
+  color: #B3B3B3;
+  border: 1px solid #535353;
+}
+
+.btn-secondary:hover {
+  background: #282828;
+  color: #EFEFEF;
+  border-color: #EFEFEF;
 }
 
 .loading {
   text-align: center;
   padding: 40px;
-  color: #666;
+  color: #B3B3B3;
 }
 
 .error {
-  background: #f8d7da;
-  color: #721c24;
+  background: #5A2D41;
+  color: #F5C2C7;
   padding: 15px;
-  border-radius: 8px;
+  border-radius: 4px;
   margin: 20px 0;
-  border: 1px solid #f5c6cb;
+  border: 1px solid #842029;
 }
 
 .success {
-  background: #d4edda;
-  color: #155724;
+  background: #0F5132;
+  color: #D1E7DD;
   padding: 15px;
-  border-radius: 8px;
+  border-radius: 4px;
   margin: 20px 0;
-  border: 1px solid #c3e6cb;
+  border: 1px solid #1BD760;
 }
 
 .track-list {
@@ -137,19 +155,19 @@ body {
   align-items: center;
   padding: 15px;
   margin-bottom: 10px;
-  background: #f8f9fa;
-  border-radius: 8px;
-  border: 2px solid transparent;
+  background: #181818;
+  border-radius: 6px;
+  border: 1px solid transparent;
   transition: all 0.3s ease;
 }
 
 .track-item:hover {
-  background: #e9ecef;
+  background: #282828;
 }
 
 .track-item.selected {
-  border-color: #667eea;
-  background: #e8f0ff;
+  border-color: #1BD760;
+  background: #1a3a1a;
 }
 
 .track-artwork {
@@ -167,11 +185,11 @@ body {
 .track-title {
   font-weight: 600;
   margin-bottom: 5px;
-  color: #333;
+  color: #EFEFEF;
 }
 
 .track-artist {
-  color: #666;
+  color: #B3B3B3;
   font-size: 14px;
 }
 
@@ -183,12 +201,12 @@ body {
 .alternatives {
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid #e1e5e9;
+  border-top: 1px solid #404040;
 }
 
 .alternatives h4 {
   font-size: 14px;
-  color: #666;
+  color: #B3B3B3;
   margin-bottom: 8px;
 }
 
@@ -197,14 +215,14 @@ body {
   align-items: center;
   padding: 8px;
   margin-bottom: 5px;
-  background: white;
-  border-radius: 6px;
+  background: #282828;
+  border-radius: 4px;
   cursor: pointer;
   transition: background 0.2s ease;
 }
 
 .alternative-item:hover {
-  background: #f0f0f0;
+  background: #3E3E3E;
 }
 
 .alternative-artwork {
@@ -225,27 +243,29 @@ body {
   display: flex;
   align-items: center;
   margin: 0 20px;
-  color: white;
-  opacity: 0.5;
+  color: #B3B3B3;
+  opacity: 0.6;
 }
 
 .step.active {
   opacity: 1;
+  color: #EFEFEF;
 }
 
 .step-number {
   width: 30px;
   height: 30px;
   border-radius: 50%;
-  background: rgba(255,255,255,0.2);
+  background: #404040;
   display: flex;
   align-items: center;
   justify-content: center;
   margin-right: 10px;
   font-weight: 600;
+  color: #B3B3B3;
 }
 
 .step.active .step-number {
-  background: white;
-  color: #667eea;
+  background: #1BD760;
+  color: #000;
 }

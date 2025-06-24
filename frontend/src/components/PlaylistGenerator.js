@@ -143,7 +143,7 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <div style={{ color: '#1db954', fontWeight: '500' }}>
           {userInfo?.display_name && (
-            <>Hello, {userInfo.display_name}! 👋</>
+            <>Hello, {userInfo.display_name}!</>
           )}
         </div>
         <button className="btn btn-secondary" onClick={onLogout}>
@@ -225,7 +225,7 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
           )}
 
           <button className="btn" onClick={generatePlaylist}>
-            Generate Playlist 🎵
+            Generate Playlist
           </button>
         </div>
       )}
@@ -335,7 +335,7 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
 
       {step === 'created' && (
         <div className="card">
-          <h2>🎉 Playlist Created!</h2>
+          <h2>Playlist Created!</h2>
           {success && <div className="success">{success}</div>}
           
           <div style={{ textAlign: 'center', marginTop: '30px' }}>
