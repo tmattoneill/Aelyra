@@ -67,7 +67,7 @@ class SpotifyService:
             logger.error(f"Failed to get user profile: {str(e)}")
             raise Exception(f"Failed to get user profile: {str(e)}")
     
-    async def create_playlist(self, user_id: str, name: str, description: str = "") -> Dict:
+    async def create_playlist(self, name: str, description: str = "") -> Dict:
         """
         Create a new playlist for the user
         """
@@ -79,7 +79,7 @@ class SpotifyService:
             }
             
             response = requests.post(
-                f"{self.base_url}/users/{user_id}/playlists",
+                f"{self.base_url}/me/playlists",
                 headers=self.headers,
                 json=data
             )

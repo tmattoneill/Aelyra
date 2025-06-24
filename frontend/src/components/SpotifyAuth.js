@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import { api } from '../config';
 
 const SpotifyAuth = ({ onAuthSuccess }) => {
   const [loading, setLoading] = useState(false);
@@ -26,7 +26,7 @@ const SpotifyAuth = ({ onAuthSuccess }) => {
 
   const fetchUserInfo = async (token) => {
     try {
-      const response = await axios.get(`/api/user-info?spotify_access_token=${token}`);
+      const response = await api.get(`/api/user-info?spotify_access_token=${token}`);
       onAuthSuccess(token, response.data);
     } catch (err) {
       setError('Failed to fetch user information');
@@ -40,7 +40,7 @@ const SpotifyAuth = ({ onAuthSuccess }) => {
     setError('');
     
     try {
-      const response = await axios.get('/api/spotify');
+      const response = await api.get('/api/spotify');
       window.location.href = response.data.auth_url;
     } catch (err) {
       setError('Failed to initiate Spotify authentication');

@@ -11,7 +11,10 @@ PlayMaker is an AI-powered Spotify playlist generator with a FastAPI Python back
 ### Backend (Python)
 ```bash
 # Install dependencies
-pip install fastapi "uvicorn[standard]" pydantic requests python-dotenv openai
+pip install -r requirements.txt
+
+# Alternative using uv (faster)
+uv pip install -r requirements.txt
 
 # Run development server (HTTP on 127.0.0.1 for Spotify OAuth compatibility)
 python main.py

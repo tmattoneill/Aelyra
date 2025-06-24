@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import axios from 'axios';
+import { api } from '../config';
 
 const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired }) => {
   const [query, setQuery] = useState('');
@@ -33,7 +33,7 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
     setSuccess('');
 
     try {
-      const response = await axios.post('/api/generate-playlist', {
+      const response = await api.post('/api/generate-playlist', {
         query: query.trim(),
         openai_api_key: openaiKey || null,
         spotify_access_token: spotifyToken
@@ -71,7 +71,7 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
     setError('');
 
     try {
-      const response = await axios.post('/api/create-playlist', {
+      const response = await api.post('/api/create-playlist', {
         name: playlistName,
         track_ids: Array.from(selectedTracks),
         spotify_access_token: spotifyToken,

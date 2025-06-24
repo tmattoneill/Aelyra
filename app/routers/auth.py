@@ -103,7 +103,8 @@ async def spotify_callback(code: str = None, state: str = None, error: str = Non
         token_info = response.json()
         
         # Redirect back to frontend with token
-        frontend_url = f"http://localhost:3000/?access_token={token_info['access_token']}&expires_in={token_info['expires_in']}"
+        frontend_base_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+        frontend_url = f"{frontend_base_url}/?access_token={token_info['access_token']}&expires_in={token_info['expires_in']}"
         if token_info.get("refresh_token"):
             frontend_url += f"&refresh_token={token_info['refresh_token']}"
         
