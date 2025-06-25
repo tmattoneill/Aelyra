@@ -3,6 +3,8 @@
 # PlayMaker Production Deployment Script
 # Run this on your production server (ubuntu@moneill:~/PlayMaker)
 
+set -euo pipefail
+
 echo "Starting Production Deployment..."
 
 # Colors for output
@@ -80,9 +82,6 @@ else
     print_status "DATABASE_URL added to .env"
 fi
 
-print_status "Moving .env back..."
-mv "$BACKUP_DIR/.env" .
-
 print_status "Step 6: Setting up database with Alembic..."
 # Initialize database schema
 alembic upgrade head || { print_error "Database init failed"; exit 1; }
@@ -104,8 +103,8 @@ else
 fi
 
 print_status "Deployment completed successfully!"
-echo ""
-print_warning "Next steps:"
+
+echo -e "\n${YELLOW}⚠️  Next steps:${NC}"
 echo "1. Restart your web service (sudo systemctl restart playmaker)"
 echo "2. Test the application at https://aelyra.moneill.net"
 echo "3. Verify multi-user features work"
