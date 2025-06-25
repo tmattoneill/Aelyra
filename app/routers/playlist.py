@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 import logging
 
-from app.models.requests import GeneratePlaylistRequest, SearchTracksRequest, CreatePlaylistRequest
+from app.models.requests import GeneratePlaylistRequest, SearchTracksRequest, CreatePlaylistRequest, UpdateProfileRequest
 from app.models.responses import GeneratePlaylistResponse, ErrorResponse
 from app.services.spotify_service import SpotifyService
 from app.services.openai_service import OpenAIService
@@ -83,19 +83,35 @@ async def search_tracks(q: str, spotify_access_token: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/user-info")
-async def get_user_info(spotify_access_token: str):
+async def get_user_info(spotify_access_token: str, db: Session = Depends(get_db)):
     """
     Get user profile information and validate token
     """
     try:
         spotify_service = SpotifyService(spotify_access_token)
         user_profile = await spotify_service.get_user_profile()
-        return {
+        
+        # Get or create user record
+        user_service = UserService(db)
+        user = user_service.get_user_by_spotify_username(user_profile["id"])
+        
+        response_data = {
             "id": user_profile["id"],
             "display_name": user_profile.get("display_name", user_profile["id"]),
             "email": user_profile.get("email"),
             "images": user_profile.get("images", [])
         }
+        
+        # Add stored profile data if user exists
+        if user:
+            response_data.update({
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "location": user.location,
+                "has_openai_key": bool(user.openai_api_key)
+            })
+        
+        return response_data
     except Exception as e:
         logger.error(f"Error getting user info: {str(e)}")
         # Check if it's a token-related error
@@ -157,5 +173,92 @@ async def create_playlist(request: CreatePlaylistRequest, db: Session = Depends(
         logger.error(f"Error creating playlist: {str(e)}")
         # Check if it's a token-related error
         if "401" in str(e) or "403" in str(e) or "Bad Request" in str(e):
+            raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/user-profile")
+async def update_user_profile(request: UpdateProfileRequest, db: Session = Depends(get_db)):
+    """
+    Update user profile information
+    """
+    try:
+        spotify_service = SpotifyService(request.spotify_access_token)
+        user_profile = await spotify_service.get_user_profile()
+        
+        user_service = UserService(db)
+        user = user_service.get_user_by_spotify_username(user_profile["id"])
+        
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Update user with provided data
+        update_data = {k: v for k, v in {
+            "first_name": request.first_name,
+            "last_name": request.last_name,
+            "location": request.location,
+            "openai_api_key": request.openai_api_key
+        }.items() if v is not None}
+        
+        updated_user = user_service.update_user(user, **update_data)
+        
+        return {
+            "message": "Profile updated successfully",
+            "first_name": updated_user.first_name,
+            "last_name": updated_user.last_name,
+            "location": updated_user.location,
+            "has_openai_key": bool(updated_user.openai_api_key)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error updating user profile: {str(e)}")
+        if "401" in str(e) or "403" in str(e):
+            raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/user-playlists")
+async def get_user_playlists(spotify_access_token: str, limit: int = 20, offset: int = 0, db: Session = Depends(get_db)):
+    """
+    Get user's playlist history
+    """
+    try:
+        spotify_service = SpotifyService(spotify_access_token)
+        user_profile = await spotify_service.get_user_profile()
+        
+        user_service = UserService(db)
+        user = user_service.get_user_by_spotify_username(user_profile["id"])
+        
+        if not user:
+            return {"playlists": []}
+        
+        playlist_history_service = PlaylistHistoryService(db)
+        playlists = playlist_history_service.get_user_playlists(user.id, limit, offset)
+        
+        playlist_data = []
+        for playlist in playlists:
+            tracks = playlist_history_service.get_playlist_tracks(playlist.id)
+            playlist_data.append({
+                "id": playlist.playlist_hash,
+                "name": playlist.playlist_name,
+                "description": playlist.user_description,
+                "spotify_url": playlist.spotify_playlist_url,
+                "created_at": playlist.created_at.isoformat(),
+                "track_count": playlist.track_count,
+                "tracks": [
+                    {
+                        "position": track.position,
+                        "name": track.track_name,
+                        "artist": track.artist_name,
+                        "album": track.album_name,
+                        "spotify_id": track.spotify_track_id
+                    }
+                    for track in tracks
+                ]
+            })
+        
+        return {"playlists": playlist_data}
+        
+    except Exception as e:
+        logger.error(f"Error getting user playlists: {str(e)}")
+        if "401" in str(e) or "403" in str(e):
             raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
         raise HTTPException(status_code=500, detail=str(e))

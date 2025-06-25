@@ -16,3 +16,10 @@ class CreatePlaylistRequest(BaseModel):
     track_ids: list[str]
     spotify_access_token: str
     description: Optional[str] = None
+
+class UpdateProfileRequest(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    location: Optional[str] = None
+    openai_api_key: Optional[str] = None
+    spotify_access_token: str

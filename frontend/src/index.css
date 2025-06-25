@@ -269,3 +269,73 @@ body {
   background: #1BD760;
   color: #000;
 }
+
+/* Navigation Tabs */
+.nav-tabs {
+  display: flex;
+  background: #282828;
+  border-radius: 8px;
+  padding: 5px;
+  margin-bottom: 30px;
+  gap: 5px;
+  border: 1px solid #404040;
+}
+
+.nav-tab {
+  flex: 1;
+  padding: 12px 20px;
+  border: none;
+  background: transparent;
+  color: #B3B3B3;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-align: center;
+}
+
+.nav-tab:hover {
+  background: #3E3E3E;
+  color: #EFEFEF;
+}
+
+.nav-tab.active {
+  background: #1BD760;
+  color: #000;
+}
+
+.nav-tab.logout-tab {
+  flex: 0.3;
+  background: transparent;
+  color: #F87171;
+  border: 1px solid #404040;
+}
+
+.nav-tab.logout-tab:hover {
+  background: #5A2D41;
+  color: #F5C2C7;
+  border-color: #842029;
+}
+
+/* Grid Layout for Profile Forms */
+.profile-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+@media (max-width: 768px) {
+  .profile-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .nav-tabs {
+    flex-direction: column;
+  }
+  
+  .nav-tab {
+    text-align: center;
+  }
+}
