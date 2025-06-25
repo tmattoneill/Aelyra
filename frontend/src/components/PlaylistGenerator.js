@@ -22,6 +22,7 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
   };
 
   const generatePlaylist = async () => {
+    console.log('Starting playlist generation with token:', !!spotifyToken);
     if (!query.trim()) {
       setError('Please enter a description for your playlist');
       return;
@@ -60,6 +61,7 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
   };
 
   const createPlaylist = async () => {
+    console.log('Creating playlist with token:', !!spotifyToken, 'tracks:', selectedTracks.size);
     if (selectedTracks.size === 0) {
       setError('Please select at least one track');
       return;
@@ -79,8 +81,11 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
       setSuccess(`Playlist "${playlistName}" created successfully! You can find it in your Spotify account.`);
       setStep('created');
     } catch (err) {
+      console.error('Create playlist error:', err);
       if (isTokenExpiredError(err)) {
-        onTokenExpired();
+        console.log('Token expired during playlist creation - redirecting to auth');
+        setError('Your Spotify session has expired. Please reconnect your account.');
+        setTimeout(() => onTokenExpired(), 2000); // Show error for 2 seconds before redirect
         return;
       }
       setError(err.response?.data?.detail || 'Failed to create playlist');
@@ -307,8 +312,8 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
               </div>
             )}
             
-            <button className="btn" onClick={createPlaylist} disabled={selectedTracks.size === 0}>
-              Create Playlist in Spotify
+            <button className="btn" onClick={createPlaylist} disabled={selectedTracks.size === 0 || loading}>
+              {loading ? 'Creating Playlist...' : 'Create Playlist in Spotify'}
             </button>
             <button className="btn btn-secondary" onClick={startOver}>
               Start Over

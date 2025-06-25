@@ -12,12 +12,16 @@ const SpotifyAuth = ({ onAuthSuccess }) => {
     const accessToken = urlParams.get('access_token');
     const error = urlParams.get('error');
 
+    console.log('OAuth callback check:', { accessToken: !!accessToken, error });
+
     if (error) {
+      console.error('OAuth error:', error);
       setError(`Spotify authentication failed: ${error}`);
       return;
     }
 
     if (accessToken) {
+      console.log('Found access token in URL, validating...');
       // Clear URL parameters and fetch user info
       window.history.replaceState({}, document.title, window.location.pathname);
       fetchUserInfo(accessToken);
@@ -26,11 +30,15 @@ const SpotifyAuth = ({ onAuthSuccess }) => {
 
   const fetchUserInfo = async (token) => {
     try {
+      console.log('Validating Spotify token from OAuth callback');
       const response = await api.get(`/api/user-info?spotify_access_token=${token}`);
+      console.log('Token validation successful:', response.data);
       onAuthSuccess(token, response.data);
     } catch (err) {
-      setError('Failed to fetch user information');
-      console.error('User info fetch error:', err);
+      console.error('Token validation failed:', err);
+      console.error('Error response:', err.response);
+      setError(`Failed to validate Spotify token: ${err.response?.data?.detail || err.message}`);
+      // Stay on auth screen so user can try again
     }
   };
 
