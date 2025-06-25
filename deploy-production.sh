@@ -34,17 +34,34 @@ print_status "Step 1: Creating backups..."
 BACKUP_DIR="../PlayMaker-backup-$(date +%Y%m%d-%H%M%S)"
 cp -r . "$BACKUP_DIR"
 print_status "Backup created at: $BACKUP_DIR"
-cp .env ../PlayMaker-backup-$(date +%Y%m%d)/
+cp .env "$BACKUP_DIR/"
 print_status ".env backed up to: $BACKUP_DIR"
 
 print_status "Step 2: Pulling latest code..."
-git fetch origin
-git checkout main
-git pull origin main
+git fetch origin || {
+    print_error "Failed to fetch from origin"
+    exit 1
+}
+
+if ! git rev-parse --verify main > /dev/null 2>&1; then
+    print_error "Branch 'main' not found"
+    exit 1
+fi
+
+git checkout main || {
+    print_error "Failed to checkout 'main' branch"
+    exit 1
+}
+
+git pull origin main || {
+    print_error "Failed to pull latest changes"
+    exit 1
+}
+
 
 print_status "Step 3: Build and Activate virtual environment..."
-if ! $(which python3) -m venv .venv; then
-    echo "python3 not installed. Please check system and continue"
+if ! python3 -m venv .venv; then
+    print_error "python3 not installed or venv module missing. Please check system and continue"
     exit 1
 fi
 source .venv/bin/activate
@@ -63,16 +80,19 @@ else
     print_status "DATABASE_URL added to .env"
 fi
 
+print_status "Moving .env back..."
+mv "$BACKUP_DIR/.env" .
+
 print_status "Step 6: Setting up database with Alembic..."
 # Initialize database schema
-alembic upgrade head
+alembic upgrade head || { print_error "Database init failed"; exit 1; }
 
 print_status "Step 7: Updating frontend dependencies..."
 cd frontend
-npm install
+npm install || { print_error "npm install failed"; exit 1; }
 
 print_status "Step 8: Building frontend for production..."
-npm run build
+npm run build || { print_error "npm run build failed"; exit 1; }
 cd ..
 
 print_status "Step 9: Verifying installation..."
