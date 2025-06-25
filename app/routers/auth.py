@@ -14,6 +14,13 @@ router = APIRouter()
 # In-memory storage for state (use Redis in production)
 oauth_states = {}
 
+@router.get("", response_model=AuthResponse)
+async def spotofy_auth_no_slash():
+    """
+    Initiate Spotify OAuth flow No Slash
+    """
+    return await spotify_auth()
+
 @router.get("/", response_model=AuthResponse)
 async def spotify_auth():
     """

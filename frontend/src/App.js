@@ -40,7 +40,7 @@ function App() {
                 objectFit: 'contain'
               }}
           />
-        <p>Create the Perect Playlilst Together</p>
+        <p>Create the Perfect Playlilst Together</p>
       </div>
 
       <div className="steps">
