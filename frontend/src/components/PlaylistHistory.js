@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
-const PlaylistHistory = ({ spotifyToken }) => {
+const PlaylistHistory = ({ spotifyToken, userInfo }) => {
   const [playlists, setPlaylists] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [expandedPlaylist, setExpandedPlaylist] = useState(null);
 
   useEffect(() => {
     fetchPlaylists();
@@ -34,8 +33,15 @@ const PlaylistHistory = ({ spotifyToken }) => {
     }
   };
 
-  const togglePlaylistExpansion = (playlistId) => {
-    setExpandedPlaylist(expandedPlaylist === playlistId ? null : playlistId);
+  const formatDuration = (trackCount) => {
+    // Estimate duration (average 3.5 minutes per track)
+    const estimatedMinutes = Math.round(trackCount * 3.5);
+    if (estimatedMinutes < 60) {
+      return `${estimatedMinutes} min`;
+    }
+    const hours = Math.floor(estimatedMinutes / 60);
+    const minutes = estimatedMinutes % 60;
+    return `${hours} hr ${minutes} min`;
   };
 
   const formatDate = (isoString) => {
@@ -43,10 +49,53 @@ const PlaylistHistory = ({ spotifyToken }) => {
     return date.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
+      day: 'numeric'
     });
+  };
+
+
+  const renderAlbumArtGrid = (albumArt) => {
+    // Create a 2x2 grid of album artwork
+    const artArray = [...albumArt];
+    
+    // Fill with placeholder if we don't have 4 images
+    while (artArray.length < 4) {
+      artArray.push(null);
+    }
+
+    return (
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr',
+        gridTemplateRows: '1fr 1fr',
+        gap: '2px',
+        width: '120px',
+        height: '120px',
+        borderRadius: '4px',
+        overflow: 'hidden',
+        flexShrink: 0
+      }}>
+        {artArray.slice(0, 4).map((art, index) => (
+          <div
+            key={index}
+            style={{
+              width: '100%',
+              height: '100%',
+              background: art 
+                ? `url(${art}) center/cover` 
+                : 'linear-gradient(45deg, #333, #555)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#888',
+              fontSize: '24px'
+            }}
+          >
+            {!art && '♪'}
+          </div>
+        ))}
+      </div>
+    );
   };
 
   if (loading) {
@@ -68,7 +117,7 @@ const PlaylistHistory = ({ spotifyToken }) => {
   if (playlists.length === 0) {
     return (
       <div className="card">
-        <h2 style={{ color: '#1BD760', marginBottom: '20px' }}>Playlist History</h2>
+        <h2 style={{ color: '#1BD760', marginBottom: '20px' }}>User Playlist History</h2>
         <div style={{ textAlign: 'center', padding: '40px', color: '#B3B3B3' }}>
           <p>No playlists created yet.</p>
           <p>Create your first playlist to see it appear here!</p>
@@ -79,140 +128,116 @@ const PlaylistHistory = ({ spotifyToken }) => {
 
   return (
     <div className="card">
-      <h2 style={{ color: '#1BD760', marginBottom: '20px' }}>
-        Playlist History ({playlists.length})
+      <h2 style={{ 
+        color: '#EFEFEF', 
+        marginBottom: '30px',
+        fontSize: '28px',
+        fontWeight: '300'
+      }}>
+        Playlist History for {userInfo?.first_name || userInfo?.display_name?.split(' ')[0] || 'User'}
       </h2>
       
-      <div style={{ maxHeight: '600px', overflowY: 'auto' }}>
+      <div style={{ 
+        display: 'flex', 
+        flexDirection: 'column',
+        gap: '20px',
+        maxHeight: '70vh',
+        overflowY: 'auto',
+        paddingRight: '10px'
+      }}>
         {playlists.map((playlist, index) => (
           <div 
             key={playlist.id}
+            onClick={() => window.open(playlist.spotify_url, '_blank')}
+            title="Click to open in Spotify"
             style={{
-              background: '#181818',
-              border: '1px solid #404040',
+              background: '#AAAAAA',
               borderRadius: '8px',
-              marginBottom: '15px',
-              overflow: 'hidden'
+              padding: '20px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '20px',
+              cursor: 'pointer',
+              transition: 'opacity 0.2s ease',
+              position: 'relative',
+              minHeight: '120px'
+            }}
+            onMouseEnter={(e) => {
+              e.target.style.opacity = '0.9';
+            }}
+            onMouseLeave={(e) => {
+              e.target.style.opacity = '1';
             }}
           >
-            <div 
-              style={{
-                padding: '20px',
-                cursor: 'pointer',
-                borderBottom: expandedPlaylist === playlist.id ? '1px solid #404040' : 'none'
-              }}
-              onClick={() => togglePlaylistExpansion(playlist.id)}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div style={{ flex: 1 }}>
-                  <h3 style={{ 
-                    color: '#EFEFEF', 
-                    margin: '0 0 8px 0',
-                    fontSize: '18px',
-                    fontWeight: '600'
-                  }}>
-                    {playlist.name}
-                  </h3>
-                  
-                  <p style={{ 
-                    color: '#B3B3B3', 
-                    margin: '0 0 10px 0',
-                    fontSize: '14px',
-                    lineHeight: '1.4'
-                  }}>
-                    {playlist.description}
-                  </p>
-                  
-                  <div style={{ 
-                    display: 'flex', 
-                    gap: '20px', 
-                    fontSize: '12px', 
-                    color: '#B3B3B3' 
-                  }}>
-                    <span>{playlist.track_count} tracks</span>
-                    <span>Created: {formatDate(playlist.created_at)}</span>
-                  </div>
+            {/* Album Art Grid */}
+            {renderAlbumArtGrid(playlist.album_art || [])}
+            
+            {/* Playlist Info */}
+            <div style={{ flex: 1, color: '#000' }}>
+              <div style={{ 
+                fontSize: '12px', 
+                fontWeight: '500',
+                marginBottom: '6px',
+                opacity: 0.7,
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px'
+              }}>
+                Public Playlist
+              </div>
+              
+              <h3 style={{ 
+                fontSize: '28px',
+                fontWeight: '700',
+                margin: '0 0 6px 0',
+                lineHeight: '1.1'
+              }}>
+                {playlist.name}
+              </h3>
+              
+              <div style={{ 
+                fontSize: '13px',
+                margin: '0 0 8px 0',
+                opacity: 0.8,
+                fontWeight: '500'
+              }}>
+                Date Created: {formatDate(playlist.created_at)}
+              </div>
+              
+              <p style={{ 
+                fontSize: '14px',
+                margin: '0 0 12px 0',
+                opacity: 0.9,
+                lineHeight: '1.3'
+              }}>
+                Generated by PlayMaker AI for: "{playlist.description}"
+              </p>
+              
+              <div style={{ 
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontSize: '13px',
+                opacity: 0.8
+              }}>
+                <div style={{
+                  width: '18px',
+                  height: '18px',
+                  borderRadius: '50%',
+                  background: 'rgba(0,0,0,0.2)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '10px'
+                }}>
+                  ♪
                 </div>
-                
-                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                  <a
-                    href={playlist.spotify_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="btn-secondary"
-                    style={{ 
-                      padding: '8px 15px', 
-                      fontSize: '12px',
-                      textDecoration: 'none',
-                      display: 'inline-block'
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    Open in Spotify
-                  </a>
-                  
-                  <span style={{ 
-                    color: '#B3B3B3', 
-                    fontSize: '18px',
-                    transform: expandedPlaylist === playlist.id ? 'rotate(180deg)' : 'rotate(0deg)',
-                    transition: 'transform 0.2s ease'
-                  }}>
-                    ▼
-                  </span>
-                </div>
+                <span style={{ fontWeight: '500' }}>{userInfo?.display_name || userInfo?.id || 'User'}</span>
+                <span>•</span>
+                <span>{playlist.track_count} songs</span>
+                <span>•</span>
+                <span>{formatDuration(playlist.track_count)}</span>
               </div>
             </div>
-            
-            {expandedPlaylist === playlist.id && (
-              <div style={{ padding: '0 20px 20px 20px' }}>
-                <h4 style={{ 
-                  color: '#EFEFEF', 
-                  marginBottom: '15px',
-                  fontSize: '14px',
-                  fontWeight: '600'
-                }}>
-                  Track List:
-                </h4>
-                
-                <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
-                  {playlist.tracks.map((track) => (
-                    <div 
-                      key={`${playlist.id}-${track.position}`}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        padding: '8px 0',
-                        borderBottom: '1px solid #2A2A2A'
-                      }}
-                    >
-                      <span style={{ 
-                        color: '#B3B3B3', 
-                        minWidth: '30px',
-                        fontSize: '12px'
-                      }}>
-                        {track.position}.
-                      </span>
-                      
-                      <div style={{ flex: 1 }}>
-                        <div style={{ 
-                          color: '#EFEFEF', 
-                          fontSize: '14px',
-                          marginBottom: '2px'
-                        }}>
-                          {track.name}
-                        </div>
-                        <div style={{ 
-                          color: '#B3B3B3', 
-                          fontSize: '12px'
-                        }}>
-                          {track.artist} • {track.album}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         ))}
       </div>

@@ -11,6 +11,7 @@ from app.services.openai_service import OpenAIService
 from app.database import get_db
 from app.services.user_service import UserService
 from app.services.playlist_history_service import PlaylistHistoryService
+import asyncio
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -236,6 +237,19 @@ async def get_user_playlists(spotify_access_token: str, limit: int = 20, offset:
         playlist_data = []
         for playlist in playlists:
             tracks = playlist_history_service.get_playlist_tracks(playlist.id)
+            
+            # Get album art for the first 4 tracks for UI display
+            album_art_urls = []
+            if tracks:
+                first_four_track_ids = [track.spotify_track_id for track in tracks[:4]]
+                try:
+                    # Add small delay to avoid overwhelming Spotify API
+                    await asyncio.sleep(0.03)  # 30ms delay
+                    track_details = await spotify_service.get_tracks_details(first_four_track_ids)
+                    album_art_urls = [track.get('album_art') for track in track_details if track.get('album_art')]
+                except Exception as e:
+                    logger.warning(f"Failed to get album art for playlist {playlist.playlist_hash}: {e}")
+            
             playlist_data.append({
                 "id": playlist.playlist_hash,
                 "name": playlist.playlist_name,
@@ -243,6 +257,7 @@ async def get_user_playlists(spotify_access_token: str, limit: int = 20, offset:
                 "spotify_url": playlist.spotify_playlist_url,
                 "created_at": playlist.created_at.isoformat(),
                 "track_count": playlist.track_count,
+                "album_art": album_art_urls[:4],  # Limit to 4 for 2x2 grid
                 "tracks": [
                     {
                         "position": track.position,

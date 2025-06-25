@@ -62,6 +62,7 @@ function App() {
         return (
           <PlaylistHistory 
             spotifyToken={spotifyToken}
+            userInfo={userInfo}
           />
         );
       default:
