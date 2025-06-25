@@ -90,6 +90,7 @@ SPOTIFY_CLIENT_ID=your_spotify_client_id
 SPOTIFY_CLIENT_SECRET=your_spotify_client_secret  
 SPOTIFY_REDIRECT_URI=http://127.0.0.1:5988/api/spotify/callback
 OPENAI_API_KEY=your_openai_api_key
+DATABASE_URL=sqlite:///./playmaker.db  # Optional, defaults to SQLite
 DEBUG=True
 ```
 
@@ -100,12 +101,46 @@ DEBUG=True
 - No SSL certificates required for development
 - Standard pip for Python package management
 
+## Multi-User Support
+
+### Database Architecture
+- **SQLite Database**: `playmaker.db` for user profile and playlist history storage
+- **User Model**: Stores email, Spotify username, name, location, account creation date, and personal OpenAI API key
+- **Playlist History Model**: Tracks all playlists created by users with metadata
+- **Playlist Tracks Model**: Stores individual track details for each playlist
+- **Automatic Profile Creation**: User profiles are automatically created/updated during Spotify OAuth flow
+
+### User Features
+- **Personal OpenAI Keys**: Users can store their own OpenAI API keys for playlist generation
+- **Profile Persistence**: User data persists across sessions and includes Spotify profile information
+- **Playlist History**: Complete history of all playlists created by each user
+- **Track Storage**: Detailed track information including Spotify IDs, names, artists, and albums
+- **Privacy**: Secure storage of personal API keys (encryption recommended for production)
+
+### Playlist History Features
+- **Automatic Tracking**: Playlists are automatically saved when "Create Playlist" is clicked
+- **Unique Identification**: Each playlist gets an MD5 hash based on name + creation timestamp
+- **Complete Track Lists**: All selected tracks are stored with full metadata
+- **Spotify Integration**: Direct links to created playlists on Spotify
+- **User Association**: Each playlist is linked to the authenticated user
+
+### Database Management
+```bash
+# Run database migrations
+alembic upgrade head
+
+# Create new migration after model changes
+alembic revision --autogenerate -m "Description of changes"
+```
+
 ## Key Dependencies
 
 ### Backend
 - FastAPI 0.104.1+ with Uvicorn
 - OpenAI 1.3.0+ for AI suggestions
 - Pydantic 2.5.0+ for data validation
+- SQLAlchemy 2.0+ for database ORM
+- Alembic for database migrations
 - Requests for HTTP calls
 
 ### Frontend  

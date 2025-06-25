@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 
 from app.routers import playlist, auth
 from app.models.responses import ErrorResponse
+from app.database import engine, Base
 
 load_dotenv()
 
@@ -16,6 +17,9 @@ app = FastAPI(
     description="AI-Powered Spotify Playlist Generator",
     version="1.0.0"
 )
+
+# Create database tables
+Base.metadata.create_all(bind=engine)
 
 # CORS middleware for frontend integration
 allowed_origins = os.getenv("CORS_ORIGINS", "*").split(",")

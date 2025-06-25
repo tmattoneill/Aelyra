@@ -111,3 +111,41 @@ class SpotifyService:
         except requests.RequestException as e:
             logger.error(f"Failed to add tracks to playlist: {str(e)}")
             raise Exception(f"Failed to add tracks to playlist: {str(e)}")
+    
+    async def get_tracks_details(self, track_ids: List[str]) -> List[Dict]:
+        """
+        Get detailed information for multiple tracks by their IDs
+        """
+        try:
+            # Spotify API allows up to 50 tracks per request
+            track_data = []
+            
+            for i in range(0, len(track_ids), 50):
+                batch_ids = track_ids[i:i+50]
+                params = {"ids": ",".join(batch_ids)}
+                
+                response = requests.get(
+                    f"{self.base_url}/tracks",
+                    headers=self.headers,
+                    params=params
+                )
+                response.raise_for_status()
+                
+                data = response.json()
+                
+                for track in data["tracks"]:
+                    if track:  # Track might be None if not found
+                        track_info = {
+                            "spotify_id": track["id"],
+                            "name": track["name"],
+                            "artist": ", ".join([artist["name"] for artist in track["artists"]]),
+                            "album": track["album"]["name"],
+                            "album_art": track["album"]["images"][0]["url"] if track["album"]["images"] else None
+                        }
+                        track_data.append(track_info)
+            
+            return track_data
+            
+        except requests.RequestException as e:
+            logger.error(f"Failed to get track details: {str(e)}")
+            raise Exception(f"Failed to get track details: {str(e)}")

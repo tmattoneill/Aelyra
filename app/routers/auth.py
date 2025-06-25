@@ -1,6 +1,7 @@
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import RedirectResponse
+from sqlalchemy.orm import Session
 import os
 import urllib.parse
 import requests
@@ -8,11 +9,20 @@ import secrets
 import base64
 
 from app.models.responses import AuthResponse, CallbackResponse
+from app.database import get_db
+from app.services.user_service import UserService
 
 router = APIRouter()
 
 # In-memory storage for state (use Redis in production)
 oauth_states = {}
+
+def get_spotify_user_profile(access_token: str) -> dict:
+    """Fetch user profile from Spotify API"""
+    headers = {"Authorization": f"Bearer {access_token}"}
+    response = requests.get("https://api.spotify.com/v1/me", headers=headers)
+    response.raise_for_status()
+    return response.json()
 
 @router.get("", response_model=AuthResponse)
 async def spotofy_auth_no_slash():
@@ -57,7 +67,7 @@ async def spotify_auth():
     return AuthResponse(auth_url=auth_url)
 
 @router.get("/callback")
-async def spotify_callback(code: str = None, state: str = None, error: str = None):
+async def spotify_callback(code: str = None, state: str = None, error: str = None, db: Session = Depends(get_db)):
     """
     Handle Spotify OAuth callback
     """
@@ -108,6 +118,23 @@ async def spotify_callback(code: str = None, state: str = None, error: str = Non
         )
         response.raise_for_status()
         token_info = response.json()
+        
+        # Fetch user profile from Spotify
+        try:
+            profile = get_spotify_user_profile(token_info['access_token'])
+            
+            # Create or update user record
+            user_service = UserService(db)
+            user = user_service.get_or_create_user(
+                email=profile.get('email', ''),
+                spotify_username=profile.get('id', ''),
+                first_name=profile.get('display_name', '').split(' ')[0] if profile.get('display_name') else None,
+                location=profile.get('country')
+            )
+            
+        except Exception as e:
+            # Log the error but don't fail the auth flow
+            print(f"Error creating/updating user profile: {str(e)}")
         
         # Redirect back to frontend with token
         frontend_base_url = os.getenv("FRONTEND_URL", "http://localhost:3000")

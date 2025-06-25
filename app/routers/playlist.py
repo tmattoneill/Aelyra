@@ -1,24 +1,39 @@
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
 import logging
 
 from app.models.requests import GeneratePlaylistRequest, SearchTracksRequest, CreatePlaylistRequest
 from app.models.responses import GeneratePlaylistResponse, ErrorResponse
 from app.services.spotify_service import SpotifyService
 from app.services.openai_service import OpenAIService
+from app.database import get_db
+from app.services.user_service import UserService
+from app.services.playlist_history_service import PlaylistHistoryService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 @router.post("/generate-playlist", response_model=GeneratePlaylistResponse)
-async def generate_playlist(request: GeneratePlaylistRequest):
+async def generate_playlist(request: GeneratePlaylistRequest, db: Session = Depends(get_db)):
     """
     Main endpoint: Generate a playlist based on natural language query
     """
     try:
-        # Initialize services (OpenAI API key is optional, will use env var as fallback)
-        openai_service = OpenAIService(request.openai_api_key)
+        # Get user's stored OpenAI API key if available
+        openai_api_key = request.openai_api_key
+        if not openai_api_key:
+            # Try to get user's stored API key
+            spotify_service = SpotifyService(request.spotify_access_token)
+            user_profile = await spotify_service.get_user_profile()
+            user_service = UserService(db)
+            user = user_service.get_user_by_spotify_username(user_profile["id"])
+            if user and user.openai_api_key:
+                openai_api_key = user.openai_api_key
+        
+        # Initialize services
+        openai_service = OpenAIService(openai_api_key)
         spotify_service = SpotifyService(request.spotify_access_token)
         
         # Generate track suggestions using OpenAI
@@ -89,7 +104,7 @@ async def get_user_info(spotify_access_token: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/create-playlist")
-async def create_playlist(request: CreatePlaylistRequest):
+async def create_playlist(request: CreatePlaylistRequest, db: Session = Depends(get_db)):
     """
     Create a playlist in user's Spotify account
     """
@@ -108,6 +123,29 @@ async def create_playlist(request: CreatePlaylistRequest):
         # Add tracks to playlist
         if request.track_ids:
             await spotify_service.add_tracks_to_playlist(playlist["id"], request.track_ids)
+        
+        # Save playlist history
+        try:
+            user_service = UserService(db)
+            user = user_service.get_user_by_spotify_username(user_profile["id"])
+            
+            if user:
+                # Get detailed track information
+                track_details = await spotify_service.get_tracks_details(request.track_ids)
+                
+                # Save playlist history
+                playlist_history_service = PlaylistHistoryService(db)
+                playlist_history_service.create_playlist_history(
+                    user_id=user.id,
+                    playlist_name=request.name,
+                    user_description=request.description or "",
+                    spotify_playlist_id=playlist["id"],
+                    spotify_playlist_url=playlist["external_urls"]["spotify"],
+                    track_data=track_details
+                )
+        except Exception as history_error:
+            # Log the error but don't fail the playlist creation
+            logger.error(f"Error saving playlist history: {str(history_error)}")
         
         return {
             "playlist_id": playlist["id"],
