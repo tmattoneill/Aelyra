@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import { api } from '../config';
 
 const UserProfile = ({ spotifyToken, userInfo, onProfileUpdate }) => {
   const [profile, setProfile] = useState({
@@ -54,7 +54,7 @@ const UserProfile = ({ spotifyToken, userInfo, onProfileUpdate }) => {
         updateData.openai_api_key = profile.openai_api_key;
       }
 
-      const response = await axios.put('http://127.0.0.1:5988/api/user-profile', updateData);
+      const response = await api.put('/api/user-profile', updateData);
       
       setSuccess('Profile updated successfully!');
       

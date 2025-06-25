@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import { api } from '../config';
 
 const PlaylistHistory = ({ spotifyToken, userInfo }) => {
   const [playlists, setPlaylists] = useState([]);
@@ -17,7 +17,7 @@ const PlaylistHistory = ({ spotifyToken, userInfo }) => {
     setError('');
 
     try {
-      const response = await axios.get('http://127.0.0.1:5988/api/user-playlists', {
+      const response = await api.get('/api/user-playlists', {
         params: {
           spotify_access_token: spotifyToken,
           limit: 50
