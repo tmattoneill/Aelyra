@@ -3,7 +3,7 @@
 # PlayMaker Production Deployment Script
 # Run this on your production server (ubuntu@moneill:~/PlayMaker)
 
-echo "🚀 Starting PlayMaker Multi-User Production Deployment..."
+echo "Starting Production Deployment..."
 
 # Colors for output
 RED='\033[0;31m'
@@ -30,17 +30,23 @@ if [ ! -f "main.py" ]; then
     exit 1
 fi
 
-print_status "Step 1: Creating backup..."
+print_status "Step 1: Creating backups..."
 BACKUP_DIR="../PlayMaker-backup-$(date +%Y%m%d-%H%M%S)"
 cp -r . "$BACKUP_DIR"
 print_status "Backup created at: $BACKUP_DIR"
+cp .env ../PlayMaker-backup-$(date +%Y%m%d)/
+print_status ".env backed up to: $BACKUP_DIR"
 
 print_status "Step 2: Pulling latest code..."
 git fetch origin
 git checkout main
 git pull origin main
 
-print_status "Step 3: Activating virtual environment..."
+print_status "Step 3: Build and Activate virtual environment..."
+if ! $(which python3) -m venv .venv; then
+    echo "python3 not installed. Please check system and continue"
+    exit 1
+fi
 source .venv/bin/activate
 
 print_status "Step 4: Installing new dependencies..."
@@ -64,6 +70,7 @@ alembic upgrade head
 print_status "Step 7: Updating frontend dependencies..."
 cd frontend
 npm install
+
 print_status "Step 8: Building frontend for production..."
 npm run build
 cd ..
@@ -76,10 +83,10 @@ else
     exit 1
 fi
 
-print_status "🎉 Deployment completed successfully!"
+print_status "Deployment completed successfully!"
 echo ""
 print_warning "Next steps:"
-echo "1. Restart your web service (systemd/supervisor/pm2)"
+echo "1. Restart your web service (sudo systemctl restart playmaker)"
 echo "2. Test the application at https://aelyra.moneill.net"
 echo "3. Verify multi-user features work"
 echo ""
