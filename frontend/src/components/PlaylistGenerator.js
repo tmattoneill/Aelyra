@@ -4,7 +4,6 @@ import { api } from '../config';
 
 const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired }) => {
   const [query, setQuery] = useState('');
-  const [openaiKey, setOpenaiKey] = useState('');
   const [tracks, setTracks] = useState([]);
   const [selectedTracks, setSelectedTracks] = useState(new Set());
   const [playlistName, setPlaylistName] = useState('');
@@ -35,7 +34,6 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
     try {
       const response = await api.post('/api/generate-playlist', {
         query: query.trim(),
-        openai_api_key: openaiKey || null,
         spotify_access_token: spotifyToken
       });
 
@@ -170,20 +168,6 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
             />
           </div>
 
-          <div className="form-group">
-            <label htmlFor="openai-key">OpenAI API Key (Optional)</label>
-            <input
-              id="openai-key"
-              type="password"
-              className="form-input"
-              value={openaiKey}
-              onChange={(e) => setOpenaiKey(e.target.value)}
-              placeholder="sk-... (leave blank to use default)"
-            />
-            <small style={{ color: '#666', fontSize: '14px' }}>
-              If you have your own OpenAI API key, you can enter it here for potentially better results.
-            </small>
-          </div>
 
           {error && (
             <div className="error">
