@@ -63,6 +63,10 @@ coverage.xml
 .pytest_cache/
 cover/
 
+# Security Certs
+certs/
+*.pem
+
 # Translations
 *.mo
 *.pot
@@ -143,6 +147,12 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+
+# SSL Certificates
+certs/
+*.pem
+*.key
+*.crt
 
 # Spyder project settings
 .spyderproject
