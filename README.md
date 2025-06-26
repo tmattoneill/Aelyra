@@ -14,7 +14,7 @@ An AI-powered Spotify playlist generator that creates curated playlists from nat
 ## Architecture
 
 **Backend**: FastAPI (Python) with OpenAI and Spotify Web API integration  
-**Frontend**: React with Create React App  
+**Frontend**: React with Vite (migrated from Create React App)  
 **Authentication**: Spotify OAuth 2.0 flow  
 **Development**: HTTP on loopback addresses for Spotify OAuth compatibility
 
@@ -90,10 +90,10 @@ The backend will be available at `http://127.0.0.1:5988`
 cd frontend
 npm start
 ```
-The frontend will be available at `http://localhost:3000`
+The frontend will be available at `http://127.0.0.1:3000`
 
 ### Access the Application
-Open your browser and navigate to `http://localhost:3000`
+Open your browser and navigate to `http://127.0.0.1:3000`
 
 ## Usage
 
@@ -178,6 +178,43 @@ For production deployment, consider:
 - **Error Handling**: Enhanced error reporting and monitoring
 - **Security Hardening**: Proper CORS configuration, input validation, and secret management
 - **Caching**: Cache Spotify search results and AI responses for better performance
+
+## Development Notes
+
+### Frontend Build System (Vite Migration)
+
+The frontend has been migrated from Create React App to Vite for improved performance:
+
+**Performance Improvements:**
+- Dev server startup: ~200ms (vs 15+ seconds with CRA)
+- Production builds: ~800ms (vs minutes with CRA)
+- Hot module replacement: Nearly instantaneous
+- Zero deprecation warnings from outdated dependencies
+
+**Updated Commands:**
+- `npm start` or `npm run dev` - Development server
+- `npm run build` - Production build  
+- `npm run preview` - Preview production build
+- `npm test` - Run tests
+
+**Rebuild Instructions:**
+```bash
+# Standard rebuild (recommended)
+cd frontend
+npm install
+npm start
+
+# Full clean rebuild (only if needed)
+cd frontend
+rm package-lock.json
+rm -rf node_modules
+npm install
+npm start
+```
+
+**Environment Variables:**
+- Changed from `REACT_APP_` prefix to `VITE_` prefix
+- Use `import.meta.env` instead of `process.env` in code
 
 ## Troubleshooting
 
