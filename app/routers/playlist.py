@@ -43,7 +43,20 @@ async def generate_playlist(request: GeneratePlaylistRequest, db: Session = Depe
         # Search for tracks on Spotify and get alternatives
         tracks_with_alternatives = []
         for track in suggested_tracks:
-            search_results = await spotify_service.search_track(f"{track['title']} {track['artist']}")
+            # Support both old and new field formats
+            track_name = track.get('track_name', track.get('title', ''))
+            artist = track.get('artist', '')
+            album = track.get('album', '')
+            release_year = track.get('release_year', '')
+            
+            # Enhanced search query with album and year for better precision
+            search_query = f"{track_name} {artist}"
+            if album and album != "Unknown Album":
+                search_query += f" album:{album}"
+            if release_year and release_year != "Unknown":
+                search_query += f" year:{release_year}"
+            
+            search_results = await spotify_service.search_track(search_query)
             if search_results:
                 # Take the first result as main track, rest as alternatives
                 main_track = search_results[0]
