@@ -38,7 +38,13 @@ class UserService:
     def get_or_create_user(self, email: str, spotify_username: str, **kwargs) -> User:
         user = self.get_user_by_email(email)
         if not user:
+            # New user: set all fields from Spotify profile
             user = self.create_user(email, spotify_username, **kwargs)
         else:
-            user = self.update_user(user, spotify_username=spotify_username, **kwargs)
+            # Existing user: only update system fields, preserve user-customizable fields
+            system_fields = {
+                'spotify_username': spotify_username,
+                'location': kwargs.get('location')  # Location can change
+            }
+            user = self.update_user(user, **system_fields)
         return user
