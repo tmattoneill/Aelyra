@@ -19,7 +19,7 @@ PID_FILE="$HOME/Aelyra/$APP_NAME.pid"
 LOG_FILE="$HOME/Aelyra/logs/$APP_NAME.log"
 ERROR_LOG="$HOME/Aelyra/logs/$APP_NAME.error.log"
 HOST="127.0.0.1"
-PORT="5988"
+PORT="8000"
 
 # Function to print colored output
 print_status() {
@@ -193,7 +193,7 @@ validate_environment() {
     fi
     
     # Check frontend build
-    if [ ! -d "frontend/build" ]; then
+    if [ ! -d "frontend/dist" ]; then
         print_error "Frontend build not found. Please run deploy-prod.sh first."
         exit 1
     fi
