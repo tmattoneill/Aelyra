@@ -2,6 +2,8 @@
 wireframes/
 deploy-prod.sh
 prod-deploy-plan.txt 
+CLAUDE.md
+claude.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
