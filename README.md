@@ -1,4 +1,4 @@
-# 🎵 PlayMaker
+# Aelyra
 
 An AI-powered Spotify playlist generator with multi-user support, persistent storage, and advanced user management. Users can create custom playlists from natural language descriptions, manage their account information, and access their complete playlist history.
 
