@@ -22,25 +22,14 @@ async def generate_playlist(request: GeneratePlaylistRequest, db: Session = Depe
     Main endpoint: Generate a playlist based on natural language query
     """
     try:
-        # Get user's stored OpenAI API key if available
-        openai_api_key = request.openai_api_key
-        if not openai_api_key:
-            # Try to get user's stored API key
-            spotify_service = SpotifyService(request.spotify_access_token)
-            user_profile = await spotify_service.get_user_profile()
-            user_service = UserService(db)
-            user = user_service.get_user_by_spotify_username(user_profile["id"])
-            if user and user.openai_api_key:
-                openai_api_key = user.openai_api_key
-        
-        # Initialize services
-        openai_service = OpenAIService(openai_api_key)
+        # Initialize services - OpenAI service uses env var only
+        openai_service = OpenAIService()
         spotify_service = SpotifyService(request.spotify_access_token)
         
         # Generate track suggestions using OpenAI
         suggested_tracks = await openai_service.generate_track_suggestions(request.query)
         
-        # Search for tracks on Spotify and get alternatives
+        # Search for tracks on Spotify and get AI-generated alternatives
         tracks_with_alternatives = []
         for track in suggested_tracks:
             # Support both old and new field formats
@@ -56,11 +45,31 @@ async def generate_playlist(request: GeneratePlaylistRequest, db: Session = Depe
             if release_year and release_year != "Unknown":
                 search_query += f" year:{release_year}"
             
-            search_results = await spotify_service.search_track(search_query)
+            search_results = await spotify_service.search_track(search_query, limit=1)
             if search_results:
-                # Take the first result as main track, rest as alternatives
                 main_track = search_results[0]
-                alternatives = search_results[1:5]  # Up to 4 alternatives
+                
+                # Generate AI-powered alternatives - completely different songs
+                ai_alternatives = await openai_service.generate_track_alternatives(track, count=4)
+                
+                # Search Spotify for each AI-generated alternative
+                spotify_alternatives = []
+                for alt_track in ai_alternatives:
+                    alt_track_name = alt_track.get('track_name', '')
+                    alt_artist = alt_track.get('artist', '')
+                    alt_album = alt_track.get('album', '')
+                    alt_year = alt_track.get('release_year', '')
+                    
+                    # Build search query for alternative
+                    alt_search_query = f"{alt_track_name} {alt_artist}"
+                    if alt_album and alt_album != "Unknown Album":
+                        alt_search_query += f" album:{alt_album}"
+                    if alt_year and alt_year != "Unknown":
+                        alt_search_query += f" year:{alt_year}"
+                    
+                    alt_results = await spotify_service.search_track(alt_search_query, limit=1)
+                    if alt_results:
+                        spotify_alternatives.append(alt_results[0])
                 
                 tracks_with_alternatives.append({
                     "title": main_track["title"],
@@ -68,7 +77,7 @@ async def generate_playlist(request: GeneratePlaylistRequest, db: Session = Depe
                     "spotify_id": main_track["spotify_id"],
                     "album_art": main_track.get("album_art"),
                     "preview_url": main_track.get("preview_url"),
-                    "alternatives": alternatives
+                    "alternatives": spotify_alternatives
                 })
         
         # Generate playlist title
@@ -121,8 +130,7 @@ async def get_user_info(spotify_access_token: str, db: Session = Depends(get_db)
             response_data.update({
                 "first_name": user.first_name,
                 "last_name": user.last_name,
-                "location": user.location,
-                "has_openai_key": bool(user.openai_api_key)
+                "location": user.location
             })
         
         return response_data
@@ -209,8 +217,7 @@ async def update_user_profile(request: UpdateProfileRequest, db: Session = Depen
         update_data = {k: v for k, v in {
             "first_name": request.first_name,
             "last_name": request.last_name,
-            "location": request.location,
-            "openai_api_key": request.openai_api_key
+            "location": request.location
         }.items() if v is not None}
         
         updated_user = user_service.update_user(user, **update_data)
@@ -219,8 +226,7 @@ async def update_user_profile(request: UpdateProfileRequest, db: Session = Depen
             "message": "Profile updated successfully",
             "first_name": updated_user.first_name,
             "last_name": updated_user.last_name,
-            "location": updated_user.location,
-            "has_openai_key": bool(updated_user.openai_api_key)
+            "location": updated_user.location
         }
         
     except Exception as e:

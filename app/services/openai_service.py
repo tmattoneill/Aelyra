@@ -195,3 +195,100 @@ class OpenAIService:
         except Exception as e:
             logger.error(f"Failed to generate playlist title: {str(e)}")
             return "Custom Playlist"
+    
+    async def generate_track_alternatives(self, main_track: Dict[str, str], count: int = 4) -> List[Dict[str, str]]:
+        """
+        Generate alternative tracks based on a main track
+        """
+        try:
+            alternatives = []
+            
+            for i in range(count):
+                # Build avoid duplicates text
+                existing_tracks = [main_track] + alternatives
+                existing_list = ", ".join([f'"{t.get("track_name", t.get("title", ""))}" by {t.get("artist", "")}' for t in existing_tracks])
+                avoid_duplicates = f"\n\nDo not suggest any of these tracks: {existing_list}"
+                
+                # Build user prompt from config
+                user_prompt = self.user_prompts["track_alternatives"].format(
+                    track_name=main_track.get("track_name", main_track.get("title", "")),
+                    artist=main_track.get("artist", ""),
+                    album=main_track.get("album", "Unknown Album"),
+                    release_year=main_track.get("release_year", "Unknown"),
+                    avoid_duplicates=avoid_duplicates
+                )
+
+                response = self.client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": self.system_prompts["track_generation"]["system_message"]},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    max_completion_tokens=300,
+                    temperature=0.8  # Higher temperature for more variety
+                )
+
+                content = response.choices[0].message.content.strip()
+                logger.info(f"Raw alternative {i+1} response: '{content}'")
+                
+                # Clean up and parse (same logic as track generation)
+                if content.startswith('```json'):
+                    content = content[7:]
+                elif content.startswith('```'):
+                    content = content[3:]
+                
+                if content.endswith('```'):
+                    content = content[:-3]
+                
+                content = content.strip()
+
+                if not content.startswith('{'):
+                    start_idx = content.find('{')
+                    if start_idx != -1:
+                        end_idx = content.rfind('}')
+                        if end_idx != -1 and end_idx > start_idx:
+                            content = content[start_idx:end_idx + 1]
+
+                if not content:
+                    logger.warning(f"Empty alternative response {i+1}, skipping")
+                    continue
+                
+                try:
+                    alternative = json.loads(content)
+                    
+                    # Validate and normalize fields
+                    if "title" in alternative and "artist" in alternative:
+                        alternative["track_name"] = alternative.pop("title")
+                    
+                    if not isinstance(alternative, dict) or "track_name" not in alternative or "artist" not in alternative:
+                        logger.warning(f"Invalid alternative structure {i+1}: {alternative}")
+                        continue
+                    
+                    # Set defaults
+                    alternative.setdefault("album", "Unknown Album")
+                    alternative.setdefault("release_year", "Unknown")
+                    
+                    # Check for duplicates
+                    alt_name = alternative.get("track_name", "").lower()
+                    alt_artist = alternative.get("artist", "").lower()
+                    main_name = main_track.get("track_name", main_track.get("title", "")).lower()
+                    main_artist = main_track.get("artist", "").lower()
+                    
+                    # Skip if same as main track or existing alternatives
+                    if (alt_name == main_name and alt_artist == main_artist) or \
+                       any(t.get("track_name", "").lower() == alt_name and t.get("artist", "").lower() == alt_artist for t in alternatives):
+                        logger.info(f"Skipping duplicate alternative: {alternative.get('track_name')} by {alternative.get('artist')}")
+                        continue
+                    
+                    alternatives.append(alternative)
+                    logger.info(f"Added alternative {len(alternatives)}: {alternative.get('track_name')} by {alternative.get('artist')}")
+
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse alternative {i+1} response: {content}")
+                    continue
+            
+            return alternatives
+
+        except Exception as e:
+            logger.error(f"Error generating track alternatives: {str(e)}")
+            return []

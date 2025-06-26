@@ -4,7 +4,6 @@ from typing import Optional
 
 class GeneratePlaylistRequest(BaseModel):
     query: str
-    openai_api_key: Optional[str] = None
     spotify_access_token: str
 
 class SearchTracksRequest(BaseModel):
@@ -21,5 +20,4 @@ class UpdateProfileRequest(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     location: Optional[str] = None
-    openai_api_key: Optional[str] = None
     spotify_access_token: str
