@@ -51,7 +51,7 @@ An AI-powered Spotify playlist generator with multi-user support, persistent sto
 ### 1. Clone the Repository
 ```bash
 git clone <repository-url>
-cd PlayMaker
+cd Aelyra
 ```
 
 ### 2. Backend Setup
@@ -81,7 +81,7 @@ cd ..
 1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
 2. Click "Create App"
 3. Fill in app details:
-   - **App name**: PlayMaker
+   - **App name**: Aelyra
    - **App description**: AI-powered playlist generator
    - **Website**: `http://127.0.0.1:3000`
    - **Redirect URIs**: `http://127.0.0.1:5988/api/spotify/callback`
@@ -101,7 +101,7 @@ SPOTIFY_REDIRECT_URI=http://127.0.0.1:5988/api/spotify/callback
 OPENAI_API_KEY=your_openai_api_key
 
 # Database Configuration
-DATABASE_URL=sqlite:///./playmaker.db
+DATABASE_URL=sqlite:///./aelyra.db
 
 # Development
 DEBUG=True
@@ -203,7 +203,7 @@ Open your browser and navigate to `http://localhost:3000`
 ## Project Structure
 
 ```
-PlayMaker/
+Aelyra/
 ├── app/
 │   ├── models/              # Database models and Pydantic schemas
 │   │   ├── user.py         # User database model
@@ -296,7 +296,7 @@ alembic history
 **Database Reset (Development):**
 ```bash
 # WARNING: This deletes all data
-rm playmaker.db
+rm aelyra.db
 alembic upgrade head
 ```
 
@@ -381,7 +381,7 @@ For production deployment, consider:
 - Ensure both frontend and backend are using correct ports
 
 **Database migration errors**
-- Delete `playmaker.db` and run `alembic upgrade head` to recreate
+- Delete `aelyra.db` and run `alembic upgrade head` to recreate
 - Check that all migration files are present in `alembic/versions/`
 - Verify DATABASE_URL in `.env` points to correct location
 

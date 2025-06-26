@@ -13,7 +13,7 @@ from app.database import engine, Base
 load_dotenv()
 
 app = FastAPI(
-    title="PlayMaker API",
+    title="Aelyra API",
     description="AI-Powered Spotify Playlist Generator",
     version="1.0.0"
 )
@@ -37,7 +37,7 @@ app.include_router(auth.router, prefix="/api/spotify")
 
 @app.get("/")
 async def root():
-    return {"message": "PlayMaker API - AI-Powered Spotify Playlist Generator"}
+    return {"message": "Aelyra API - AI-Powered Spotify Playlist Generator"}
 
 @app.get("/health")
 async def health_check():

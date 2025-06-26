@@ -13,14 +13,14 @@
   # Set trap to cleanup on script exit
   trap cleanup EXIT INT TERM
 
-  echo "Starting PlayMaker backend..."
+  echo "Starting Aelyra backend..."
   python main.py &
   BACKEND_PID=$!
 
   echo "Waiting for backend to start..."
   sleep 3
 
-  echo "Starting PlayMaker frontend..."
+  echo "Starting Aelyra frontend..."
   cd frontend
   npm start
 

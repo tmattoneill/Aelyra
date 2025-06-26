@@ -77,8 +77,8 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
-# PlayMaker Database
-playmaker.db
+# Aelyra Database
+aelyra.db
 
 # Flask stuff:
 instance/

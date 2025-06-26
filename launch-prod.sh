@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# PlayMaker Production Launch Script
-# Run this to start the PlayMaker application in production mode
+# Aelyra Production Launch Script
+# Run this to start the Aelyra application in production mode
 # Usage: ./launch-prod.sh [--daemon] [--stop] [--restart] [--status]
 
 set -euo pipefail
@@ -14,10 +14,10 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-APP_NAME="playmaker"
-PID_FILE="$HOME/PlayMaker/$APP_NAME.pid"
-LOG_FILE="$HOME/PlayMaker/logs/$APP_NAME.log"
-ERROR_LOG="$HOME/PlayMaker/logs/$APP_NAME.error.log"
+APP_NAME="aelyra"
+PID_FILE="$HOME/Aelyra/$APP_NAME.pid"
+LOG_FILE="$HOME/Aelyra/logs/$APP_NAME.log"
+ERROR_LOG="$HOME/Aelyra/logs/$APP_NAME.error.log"
 HOST="127.0.0.1"
 PORT="5988"
 
@@ -80,8 +80,8 @@ for arg in "$@"; do
 done
 
 # Check if we're in the right directory
-if [ "$(basename "$PWD")" != "PlayMaker" ]; then
-    print_error "Not in PlayMaker directory. Please cd to ~/PlayMaker first."
+if [ "$(basename "$PWD")" != "Aelyra" ]; then
+    print_error "Not in Aelyra directory. Please cd to ~/Aelyra first."
     exit 1
 fi
 
@@ -187,7 +187,7 @@ validate_environment() {
     fi
     
     # Check database
-    if [ ! -f "playmaker.db" ]; then
+    if [ ! -f "aelyra.db" ]; then
         print_error "Database not found. Please run deploy-prod.sh first."
         exit 1
     fi
