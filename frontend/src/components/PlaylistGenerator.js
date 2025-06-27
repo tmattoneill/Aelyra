@@ -13,6 +13,11 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
   const [showRawResponse, setShowRawResponse] = useState(false);
   const [success, setSuccess] = useState('');
   const [step, setStep] = useState('input'); // 'input', 'generated', 'created'
+  
+  // New state for streaming progress
+  const [progressStatus, setProgressStatus] = useState('');
+  const [foundTracks, setFoundTracks] = useState([]);
+  const [trackCount, setTrackCount] = useState(0);
 
   // Helper function to check if error is token expiration
   const isTokenExpiredError = (error) => {
@@ -31,30 +36,92 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
     setLoading(true);
     setError('');
     setSuccess('');
+    setProgressStatus('');
+    setFoundTracks([]);
+    setTrackCount(0);
 
     try {
-      const response = await api.post('/api/generate-playlist', {
-        query: query.trim(),
-        spotify_access_token: spotifyToken
+      // Use streaming endpoint for real-time feedback
+      const response = await fetch(`${api.defaults.baseURL}/api/generate-playlist-stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query: query.trim(),
+          spotify_access_token: spotifyToken
+        })
       });
 
-      setTracks(response.data.tracks);
-      setPlaylistName(response.data.playlist_name);
-      setSelectedTracks(new Set(response.data.tracks.map(track => track.spotify_id)));
-      setStep('generated');
-    } catch (err) {
-      const errorDetail = err.response?.data?.detail || 'Failed to generate playlist';
-      
-      // Check if this is an AI parsing error with raw response
-      if (errorDetail.includes('Failed to parse AI response|RAW_RESPONSE:')) {
-        const [errorMsg, rawResponse] = errorDetail.split('|RAW_RESPONSE:');
-        setError(errorMsg);
-        setRawAiResponse(rawResponse);
-      } else {
-        setError(errorDetail);
-        setRawAiResponse('');
+      if (!response.ok) {
+        throw new Error('Failed to start playlist generation');
       }
-      setShowRawResponse(false);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              
+              if (data.type === 'status') {
+                setProgressStatus(data.message);
+              } else if (data.type === 'track_found') {
+                setFoundTracks(prev => [...prev, data.track]);
+                setTrackCount(data.count);
+                setProgressStatus(`Found ${data.count} tracks...`);
+              } else if (data.type === 'complete') {
+                setTracks(data.playlist.tracks);
+                setPlaylistName(data.playlist.playlist_name);
+                setSelectedTracks(new Set(data.playlist.tracks.map(track => track.spotify_id)));
+                setStep('generated');
+                setLoading(false);
+                return;
+              } else if (data.type === 'error') {
+                throw new Error(data.message);
+              }
+            } catch (parseError) {
+              console.warn('Failed to parse streaming data:', parseError);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Streaming error, falling back to regular endpoint:', err);
+      
+      // Fallback to original endpoint
+      try {
+        const response = await api.post('/api/generate-playlist', {
+          query: query.trim(),
+          spotify_access_token: spotifyToken
+        });
+
+        setTracks(response.data.tracks);
+        setPlaylistName(response.data.playlist_name);
+        setSelectedTracks(new Set(response.data.tracks.map(track => track.spotify_id)));
+        setStep('generated');
+      } catch (fallbackErr) {
+        const errorDetail = fallbackErr.response?.data?.detail || 'Failed to generate playlist';
+        
+        // Check if this is an AI parsing error with raw response
+        if (errorDetail.includes('Failed to parse AI response|RAW_RESPONSE:')) {
+          const [errorMsg, rawResponse] = errorDetail.split('|RAW_RESPONSE:');
+          setError(errorMsg);
+          setRawAiResponse(rawResponse);
+        } else {
+          setError(errorDetail);
+          setRawAiResponse('');
+        }
+        setShowRawResponse(false);
+      }
     } finally {
       setLoading(false);
     }
@@ -136,6 +203,100 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
             {step === 'input' ? 'Generating your playlist...' : 'Creating playlist in Spotify...'}
           </h3>
           <p>This may take a few moments.</p>
+          
+          {step === 'input' && tracks.length === 0 && (
+            <div style={{ textAlign: 'center', margin: '20px 0' }}>
+              <video 
+                width="350"
+                autoPlay 
+                loop 
+                muted 
+                style={{ 
+                  borderRadius: '8px',
+                  maxWidth: '100%',
+                  height: 'auto',
+                  border: '1px solid #efefef'
+                }}
+              >
+                <source src="/images/aelyra_thinking.mp4" type="video/mp4" />
+                Your browser does not support the video tag.
+              </video>
+            </div>
+          )}
+          
+          {step === 'input' && (
+            <div style={{ marginTop: '20px' }}>
+              {progressStatus && (
+                <p style={{ color: '#666', fontSize: '14px', marginBottom: '15px' }}>
+                  {progressStatus}
+                </p>
+              )}
+              
+              {foundTracks.length > 0 && (
+                <div style={{ 
+                  maxHeight: '300px', 
+                  overflowY: 'auto',
+                  border: '1px solid #eee',
+                  borderRadius: '8px',
+                  padding: '10px',
+                  backgroundColor: '#fafafa'
+                }}>
+                  <p style={{ 
+                    fontSize: '12px', 
+                    color: '#888', 
+                    margin: '0 0 10px 0',
+                    textAlign: 'center' 
+                  }}>
+                    Latest tracks found:
+                  </p>
+                  {foundTracks.slice(-5).map((track, index) => (
+                    <div key={index} style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      marginBottom: '8px',
+                      padding: '5px',
+                      backgroundColor: 'white',
+                      borderRadius: '4px',
+                      fontSize: '12px'
+                    }}>
+                      {track.album_art && (
+                        <img 
+                          src={track.album_art} 
+                          alt={track.title}
+                          style={{ 
+                            width: '30px', 
+                            height: '30px', 
+                            borderRadius: '4px',
+                            marginRight: '8px',
+                            objectFit: 'cover'
+                          }}
+                        />
+                      )}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ 
+                          fontWeight: '500', 
+                          color: '#333',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis'
+                        }}>
+                          {track.title}
+                        </div>
+                        <div style={{ 
+                          color: '#666',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis'
+                        }}>
+                          {track.artist}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );

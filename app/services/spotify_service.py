@@ -1,4 +1,5 @@
 
+import httpx
 import requests
 from typing import List, Dict, Optional
 import logging
@@ -16,7 +17,7 @@ class SpotifyService:
     
     async def search_track(self, query: str, limit: int = 5) -> List[Dict]:
         """
-        Search for tracks on Spotify
+        Search for tracks on Spotify using async HTTP
         """
         try:
             params = {
@@ -25,14 +26,16 @@ class SpotifyService:
                 "limit": limit
             }
             
-            response = requests.get(
-                f"{self.base_url}/search",
-                headers=self.headers,
-                params=params
-            )
-            response.raise_for_status()
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.base_url}/search",
+                    headers=self.headers,
+                    params=params,
+                    timeout=10.0
+                )
+                response.raise_for_status()
+                data = response.json()
             
-            data = response.json()
             tracks = []
             
             for track in data["tracks"]["items"]:
@@ -47,8 +50,11 @@ class SpotifyService:
             
             return tracks
             
-        except requests.RequestException as e:
+        except httpx.HTTPError as e:
             logger.error(f"Spotify search error: {str(e)}")
+            raise Exception(f"Failed to search Spotify: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error in search_track: {str(e)}")
             raise Exception(f"Failed to search Spotify: {str(e)}")
     
     async def get_user_profile(self) -> Dict:

@@ -33,103 +33,185 @@ class OpenAIService:
 
     async def generate_track_suggestions(self, query: str) -> List[Dict[str, str]]:
         """
-        Generate track suggestions based on natural language query
-        Now generates tracks one at a time to avoid truncation issues
+        Generate 50 track suggestions in one bulk call for better performance
         """
         try:
-            tracks = []
-            max_tracks = 10
+            # Build user prompt using system prompt format
+            user_prompt = self.system_prompts["track_generation"]["objective"].format(prompt=query)
             
-            for i in range(max_tracks):
-                # Create avoid duplicates text
-                existing_tracks = ", ".join([f'"{t.get("track_name", t.get("title", ""))}" by {t.get("artist", "")}' for t in tracks])
-                avoid_duplicates = f"\n\nDo not suggest any of these already selected tracks: {existing_tracks}" if existing_tracks else ""
-                
-                # Build user prompt from config
-                user_prompt = self.user_prompts["track_generation"].format(
-                    query=query,
-                    avoid_duplicates=avoid_duplicates
-                )
+            # Combine role and rules into system message for better context
+            system_content = f"""{self.system_prompts["track_generation"]["role"]}
 
-                response = self.client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": self.system_prompts["track_generation"]["system_message"]},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    max_completion_tokens=300,
-                    temperature=0.7
-                )
+{self.system_prompts["track_generation"]["rules"]["core_directive"]}
 
-                content = response.choices[0].message.content.strip()
-                logger.info(f"Raw track {i+1} response (length: {len(content)}): '{content}'")
-                
-                # Clean up markdown formatting if present
-                if content.startswith('```json'):
-                    content = content[7:]  # Remove ```json
-                elif content.startswith('```'):
-                    content = content[3:]   # Remove ```
-                
-                if content.endswith('```'):
-                    content = content[:-3]  # Remove trailing ```
-                
-                content = content.strip()
+Rules:
+- {' '.join(self.system_prompts["track_generation"]["rules"]["factuality"])}
+- {' '.join(self.system_prompts["track_generation"]["rules"]["recording_type"])}
+- {' '.join(self.system_prompts["track_generation"]["rules"]["playlist_diversity"])}
 
-                # Extract JSON object if needed
-                if not content.startswith('{'):
-                    start_idx = content.find('{')
-                    if start_idx != -1:
-                        end_idx = content.rfind('}')
-                        if end_idx != -1 and end_idx > start_idx:
-                            content = content[start_idx:end_idx + 1]
+{self.system_prompts["track_generation"]["system_message"]}"""
 
-                # Skip empty responses
-                if not content:
-                    logger.warning(f"Empty response for track {i+1}, skipping")
-                    continue
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_content},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_completion_tokens=4000,  # Increased for 50 tracks
+                temperature=0.7
+            )
+
+            content = response.choices[0].message.content.strip()
+            logger.info(f"Raw bulk response length: {len(content)}")
+            
+            # Clean up markdown formatting if present
+            if content.startswith('```json'):
+                content = content[7:]
+            elif content.startswith('```'):
+                content = content[3:]
+            
+            if content.endswith('```'):
+                content = content[:-3]
+            
+            content = content.strip()
+
+            # Extract JSON array if needed
+            if not content.startswith('['):
+                start_idx = content.find('[')
+                if start_idx != -1:
+                    end_idx = content.rfind(']')
+                    if end_idx != -1 and end_idx > start_idx:
+                        content = content[start_idx:end_idx + 1]
+
+            if not content:
+                raise Exception("Empty response from OpenAI")
+            
+            # Parse JSON response
+            try:
+                tracks_raw = json.loads(content)
                 
-                # Parse JSON response
-                try:
-                    track = json.loads(content)
+                if not isinstance(tracks_raw, list):
+                    raise Exception("Response is not a JSON array")
+                
+                # Process and validate tracks
+                valid_tracks = []
+                seen_tracks = set()
+                
+                for i, track in enumerate(tracks_raw):
+                    if not isinstance(track, dict):
+                        logger.warning(f"Track {i+1} is not a dict: {track}")
+                        continue
                     
-                    # Validate required fields (supporting both old and new format)
-                    required_fields = ["track_name", "artist"]
-                    if not isinstance(track, dict) or not all(field in track for field in required_fields):
-                        # Try old format for backward compatibility
-                        if "title" in track and "artist" in track:
-                            track["track_name"] = track.pop("title")
-                        else:
-                            logger.warning(f"Invalid track structure for track {i+1}: {track}")
-                            continue
+                    # Normalize field names
+                    if "title" in track and "track_name" not in track:
+                        track["track_name"] = track.pop("title")
                     
-                    # Ensure all expected fields exist with defaults
+                    # Validate required fields
+                    if not all(field in track for field in ["track_name", "artist"]):
+                        logger.warning(f"Track {i+1} missing required fields: {track}")
+                        continue
+                    
+                    # Set defaults for optional fields
                     track.setdefault("album", "Unknown Album")
                     track.setdefault("release_year", "Unknown")
                     
                     # Check for duplicates
-                    track_name = track.get("track_name", "").lower()
-                    artist = track.get("artist", "").lower()
-                    if any(t.get("track_name", t.get("title", "")).lower() == track_name and 
-                           t.get("artist", "").lower() == artist for t in tracks):
-                        logger.info(f"Skipping duplicate track: {track.get('track_name')} by {track.get('artist')}")
+                    track_key = f"{track['track_name'].lower()}|{track['artist'].lower()}"
+                    if track_key in seen_tracks:
+                        logger.info(f"Skipping duplicate: {track['track_name']} by {track['artist']}")
                         continue
                     
-                    tracks.append(track)
-                    logger.info(f"Added track {len(tracks)}: {track.get('track_name')} by {track.get('artist')}")
+                    seen_tracks.add(track_key)
+                    valid_tracks.append(track)
+                    
+                    if len(valid_tracks) >= 50:  # Cap at 50 tracks
+                        break
 
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Failed to parse track {i+1} response: {content}")
-                    logger.warning(f"JSON decode error: {str(e)}")
-                    continue
+                logger.info(f"Generated {len(valid_tracks)} valid tracks from bulk request")
+                
+                # If we didn't get enough tracks, make additional requests
+                if len(valid_tracks) < 30:  # Minimum threshold for decent playlist
+                    logger.warning(f"Only got {len(valid_tracks)} tracks, attempting fallback generation")
+                    additional_tracks = await self._generate_additional_tracks(query, valid_tracks, 50 - len(valid_tracks))
+                    valid_tracks.extend(additional_tracks)
+                
+                if not valid_tracks:
+                    raise Exception("Failed to generate any valid tracks")
+                
+                return valid_tracks
 
-            if not tracks:
-                raise Exception("Failed to generate any valid tracks")
-            
-            return tracks
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse bulk response: {content[:500]}...")
+                raise Exception(f"Invalid JSON response from OpenAI: {str(e)}")
 
         except Exception as e:
-            logger.error(f"OpenAI API error: {str(e)}")
+            logger.error(f"OpenAI bulk generation error: {str(e)}")
             raise Exception(f"Failed to generate track suggestions: {str(e)}")
+
+    async def _generate_additional_tracks(self, query: str, existing_tracks: List[Dict], count: int) -> List[Dict[str, str]]:
+        """
+        Generate additional tracks when bulk generation doesn't return enough
+        """
+        try:
+            # Build list of existing tracks to avoid
+            existing_list = ", ".join([f'"{t["track_name"]}" by {t["artist"]}' for t in existing_tracks])
+            avoid_text = f"\n\nDo not suggest any of these already selected tracks: {existing_list}"
+            
+            user_prompt = f"Generate exactly {count} more songs that fit: \"{query}\".{avoid_text}"
+            
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": self.system_prompts["track_generation"]["system_message"]},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_completion_tokens=2000,
+                temperature=0.8
+            )
+
+            content = response.choices[0].message.content.strip()
+            
+            # Clean and parse (same logic as main method)
+            if content.startswith('```json'):
+                content = content[7:]
+            elif content.startswith('```'):
+                content = content[3:]
+            if content.endswith('```'):
+                content = content[:-3]
+            content = content.strip()
+
+            if not content.startswith('['):
+                start_idx = content.find('[')
+                if start_idx != -1:
+                    end_idx = content.rfind(']')
+                    if end_idx != -1:
+                        content = content[start_idx:end_idx + 1]
+
+            additional_tracks = []
+            if content:
+                try:
+                    tracks_raw = json.loads(content)
+                    if isinstance(tracks_raw, list):
+                        existing_keys = {f"{t['track_name'].lower()}|{t['artist'].lower()}" for t in existing_tracks}
+                        
+                        for track in tracks_raw:
+                            if isinstance(track, dict) and "track_name" in track and "artist" in track:
+                                track.setdefault("album", "Unknown Album")
+                                track.setdefault("release_year", "Unknown")
+                                
+                                track_key = f"{track['track_name'].lower()}|{track['artist'].lower()}"
+                                if track_key not in existing_keys:
+                                    additional_tracks.append(track)
+                                    existing_keys.add(track_key)
+                except json.JSONDecodeError:
+                    logger.warning("Failed to parse additional tracks response")
+            
+            logger.info(f"Generated {len(additional_tracks)} additional tracks")
+            return additional_tracks
+            
+        except Exception as e:
+            logger.error(f"Error generating additional tracks: {str(e)}")
+            return []
 
     async def generate_playlist_title(self, query: str) -> str:
         """
@@ -196,99 +278,3 @@ class OpenAIService:
             logger.error(f"Failed to generate playlist title: {str(e)}")
             return "Custom Playlist"
     
-    async def generate_track_alternatives(self, main_track: Dict[str, str], count: int = 4) -> List[Dict[str, str]]:
-        """
-        Generate alternative tracks based on a main track
-        """
-        try:
-            alternatives = []
-            
-            for i in range(count):
-                # Build avoid duplicates text
-                existing_tracks = [main_track] + alternatives
-                existing_list = ", ".join([f'"{t.get("track_name", t.get("title", ""))}" by {t.get("artist", "")}' for t in existing_tracks])
-                avoid_duplicates = f"\n\nDo not suggest any of these tracks: {existing_list}"
-                
-                # Build user prompt from config
-                user_prompt = self.user_prompts["track_alternatives"].format(
-                    track_name=main_track.get("track_name", main_track.get("title", "")),
-                    artist=main_track.get("artist", ""),
-                    album=main_track.get("album", "Unknown Album"),
-                    release_year=main_track.get("release_year", "Unknown"),
-                    avoid_duplicates=avoid_duplicates
-                )
-
-                response = self.client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": self.system_prompts["track_generation"]["system_message"]},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    max_completion_tokens=300,
-                    temperature=0.8  # Higher temperature for more variety
-                )
-
-                content = response.choices[0].message.content.strip()
-                logger.info(f"Raw alternative {i+1} response: '{content}'")
-                
-                # Clean up and parse (same logic as track generation)
-                if content.startswith('```json'):
-                    content = content[7:]
-                elif content.startswith('```'):
-                    content = content[3:]
-                
-                if content.endswith('```'):
-                    content = content[:-3]
-                
-                content = content.strip()
-
-                if not content.startswith('{'):
-                    start_idx = content.find('{')
-                    if start_idx != -1:
-                        end_idx = content.rfind('}')
-                        if end_idx != -1 and end_idx > start_idx:
-                            content = content[start_idx:end_idx + 1]
-
-                if not content:
-                    logger.warning(f"Empty alternative response {i+1}, skipping")
-                    continue
-                
-                try:
-                    alternative = json.loads(content)
-                    
-                    # Validate and normalize fields
-                    if "title" in alternative and "artist" in alternative:
-                        alternative["track_name"] = alternative.pop("title")
-                    
-                    if not isinstance(alternative, dict) or "track_name" not in alternative or "artist" not in alternative:
-                        logger.warning(f"Invalid alternative structure {i+1}: {alternative}")
-                        continue
-                    
-                    # Set defaults
-                    alternative.setdefault("album", "Unknown Album")
-                    alternative.setdefault("release_year", "Unknown")
-                    
-                    # Check for duplicates
-                    alt_name = alternative.get("track_name", "").lower()
-                    alt_artist = alternative.get("artist", "").lower()
-                    main_name = main_track.get("track_name", main_track.get("title", "")).lower()
-                    main_artist = main_track.get("artist", "").lower()
-                    
-                    # Skip if same as main track or existing alternatives
-                    if (alt_name == main_name and alt_artist == main_artist) or \
-                       any(t.get("track_name", "").lower() == alt_name and t.get("artist", "").lower() == alt_artist for t in alternatives):
-                        logger.info(f"Skipping duplicate alternative: {alternative.get('track_name')} by {alternative.get('artist')}")
-                        continue
-                    
-                    alternatives.append(alternative)
-                    logger.info(f"Added alternative {len(alternatives)}: {alternative.get('track_name')} by {alternative.get('artist')}")
-
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Failed to parse alternative {i+1} response: {content}")
-                    continue
-            
-            return alternatives
-
-        except Exception as e:
-            logger.error(f"Error generating track alternatives: {str(e)}")
-            return []
