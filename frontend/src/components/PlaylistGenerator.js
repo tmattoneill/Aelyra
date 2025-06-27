@@ -207,7 +207,7 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
           {step === 'input' && tracks.length === 0 && (
             <div style={{ textAlign: 'center', margin: '20px 0' }}>
               <video 
-                width="350"
+                width="700"
                 autoPlay 
                 loop 
                 muted 
@@ -218,7 +218,7 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
                   border: '1px solid #efefef'
                 }}
               >
-                <source src="/images/aelyra_thinking.mp4" type="video/mp4" />
+                <source src="/images/aelyra_thinking.mov" type="video/mp4" />
                 Your browser does not support the video tag.
               </video>
             </div>
@@ -430,9 +430,6 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
           </div>
 
           <div style={{ marginTop: '30px', textAlign: 'center' }}>
-            <p style={{ marginBottom: '20px', color: '#666' }}>
-              {selectedTracks.size} of {tracks.length} tracks selected
-            </p>
             
             {error && (
               <div className="error">

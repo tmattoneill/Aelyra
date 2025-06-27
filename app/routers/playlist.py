@@ -30,20 +30,8 @@ async def _batch_search_spotify_tracks(spotify_service: SpotifyService, suggeste
         batch_tasks = []
         
         for track in batch:
-            # Build enhanced search query
-            track_name = track.get('track_name', track.get('title', ''))
-            artist = track.get('artist', '')
-            album = track.get('album', '')
-            release_year = track.get('release_year', '')
-            
-            search_query = f"{track_name} {artist}"
-            if album and album != "Unknown Album":
-                search_query += f" album:{album}"
-            if release_year and release_year != "Unknown":
-                search_query += f" year:{release_year}"
-            
-            # Create async task for this search
-            batch_tasks.append(_search_single_track(spotify_service, search_query, track))
+            # _search_single_track now handles the search strategy internally
+            batch_tasks.append(_search_single_track(spotify_service, "", track))
         
         # Execute batch of searches concurrently
         batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
@@ -62,17 +50,69 @@ async def _batch_search_spotify_tracks(spotify_service: SpotifyService, suggeste
 
 async def _search_single_track(spotify_service: SpotifyService, search_query: str, original_track: Dict) -> Dict:
     """
-    Search for a single track on Spotify with error handling
+    Search for a single track on Spotify with improved multi-step strategy
     """
+    track_name = original_track.get('track_name', original_track.get('title', ''))
+    artist = original_track.get('artist', '')
+    album = original_track.get('album', '')
+    
     try:
-        search_results = await spotify_service.search_track(search_query, limit=1)
+        # Strategy 1: Search with just track name + artist (more likely to succeed)
+        basic_query = f"{track_name} {artist}".strip()
+        search_results = await spotify_service.search_track(basic_query, limit=10)
+        
         if search_results:
-            return search_results[0]
-        else:
-            logger.warning(f"No Spotify results for: {search_query}")
-            return None
+            # If we have album info, try to find the best match
+            if album and album != "Unknown Album":
+                # Look for exact album match first
+                for result in search_results:
+                    result_album = result.get('album', '')
+                    if result_album and album.lower() in result_album.lower():
+                        return result
+                
+                # Look for partial album matches (common words, ignoring "soundtrack", "greatest hits", etc.)
+                album_words = set(album.lower().split())
+                best_match = None
+                best_score = 0
+                
+                for result in search_results:
+                    result_album = result.get('album', '')
+                    if result_album:
+                        result_words = set(result_album.lower().split())
+                        common_words = album_words.intersection(result_words)
+                        # Filter out common non-descriptive words
+                        meaningful_words = common_words - {'the', 'a', 'an', 'and', 'or', 'of', 'in', 'on', 'at', 'to', 'for', 'soundtrack', 'greatest', 'hits', 'best', 'collection'}
+                        
+                        if len(meaningful_words) > best_score:
+                            best_score = len(meaningful_words)
+                            best_match = result
+                
+                # Return best match or first result if no good album match
+                return best_match if best_match else search_results[0]
+            else:
+                # No album info, return first result
+                return search_results[0]
+        
+        # Strategy 2: Try with quotes around track name
+        if '"' not in track_name:
+            quoted_query = f'"{track_name}" {artist}'
+            search_results = await spotify_service.search_track(quoted_query, limit=5)
+            if search_results:
+                return search_results[0]
+        
+        # Strategy 3: Try just the track name (very broad)
+        if track_name:
+            track_only_query = f'"{track_name}"'
+            search_results = await spotify_service.search_track(track_only_query, limit=5)
+            if search_results:
+                return search_results[0]
+        
+        # If all strategies fail
+        logger.warning(f"No Spotify results for track: {track_name} by {artist}")
+        return None
+        
     except Exception as e:
-        logger.warning(f"Spotify search failed for '{search_query}': {str(e)}")
+        logger.warning(f"Spotify search failed for '{track_name}' by '{artist}': {str(e)}")
         return None
 
 def _group_tracks_with_alternatives(spotify_tracks: List[Dict]) -> List[Dict]:
@@ -347,18 +387,8 @@ async def _batch_search_spotify_tracks_with_progress(spotify_service: SpotifySer
     batch_tasks = []
     
     for track in suggested_tracks:
-        track_name = track.get('track_name', track.get('title', ''))
-        artist = track.get('artist', '')
-        album = track.get('album', '')
-        release_year = track.get('release_year', '')
-        
-        search_query = f"{track_name} {artist}"
-        if album and album != "Unknown Album":
-            search_query += f" album:{album}"
-        if release_year and release_year != "Unknown":
-            search_query += f" year:{release_year}"
-        
-        batch_tasks.append(_search_single_track(spotify_service, search_query, track))
+        # _search_single_track now handles the search strategy internally  
+        batch_tasks.append(_search_single_track(spotify_service, "", track))
     
     # Execute batch concurrently  
     batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)

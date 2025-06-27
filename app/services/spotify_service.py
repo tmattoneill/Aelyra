@@ -42,6 +42,7 @@ class SpotifyService:
                 track_data = {
                     "title": track["name"],
                     "artist": ", ".join([artist["name"] for artist in track["artists"]]),
+                    "album": track["album"]["name"],
                     "spotify_id": track["id"],
                     "album_art": track["album"]["images"][0]["url"] if track["album"]["images"] else None,
                     "preview_url": track.get("preview_url")
