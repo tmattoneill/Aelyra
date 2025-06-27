@@ -1,4 +1,5 @@
 {
-	"title": "Aelyra",
-	"songs_return": 10
+	"app_title": "Aelyra",
+	"songs_to_return": 10,
+	"model_to_use": "gpt-4o-mini"
 }
