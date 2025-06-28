@@ -19,6 +19,26 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
   const [progressStatus, setProgressStatus] = useState('');
   const [foundTracks, setFoundTracks] = useState([]);
   const [trackCount, setTrackCount] = useState(0);
+  
+  // Cycling search phrases
+  const [currentSearchPhrase, setCurrentSearchPhrase] = useState('');
+  const searchPhrases = [
+    "Digging through vinyl crates",
+    "Matching beats per minute",
+    "Cross-referencing obscure B-sides",
+    "Cracking the liner notes",
+    "Finding that lost deep cut",
+    "Scanning old mixtape labels",
+    "Tuning the signal",
+    "Tagging unknown frequencies",
+    "Dusting off rare grooves",
+    "Checking underground charts",
+    "Flipping through back catalogs",
+    "Decoding handwriting on tapes",
+    "Warming up the turntables",
+    "Syncing cue points",
+    "Reading metadata from cassettes"
+  ];
 
   // Helper function to check if error is token expiration
   const isTokenExpiredError = (error) => {
@@ -40,6 +60,15 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
     setProgressStatus('');
     setFoundTracks([]);
     setTrackCount(0);
+    
+    // Start cycling through search phrases
+    let phraseIndex = 0;
+    setCurrentSearchPhrase(searchPhrases[phraseIndex]);
+    
+    const phraseInterval = setInterval(() => {
+      phraseIndex = (phraseIndex + 1) % searchPhrases.length;
+      setCurrentSearchPhrase(searchPhrases[phraseIndex]);
+    }, 1500); // Change phrase every 1.5 seconds
 
     try {
       // Use streaming endpoint for real-time feedback
@@ -85,6 +114,7 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
                 setSelectedTracks(new Set(data.playlist.tracks.map(track => track.spotify_id)));
                 setStep('generated');
                 setLoading(false);
+                clearInterval(phraseInterval); // Stop cycling phrases
                 return;
               } else if (data.type === 'error') {
                 throw new Error(data.message);
@@ -136,6 +166,7 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
       }
     } finally {
       setLoading(false);
+      clearInterval(phraseInterval); // Stop cycling phrases
     }
   };
 
@@ -239,7 +270,7 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
           <h3>
             {step === 'input' ? 'Generating your playlist...' : 'Creating playlist in Spotify...'}
           </h3>
-          <p>This may take a few moments.</p>
+          <p>{step === 'input' ? currentSearchPhrase : 'Adding tracks to your Spotify account...'}</p>
           
           {step === 'input' && tracks.length === 0 && (
             <div>
