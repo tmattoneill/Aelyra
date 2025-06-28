@@ -21,6 +21,7 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
   const [trackCount, setTrackCount] = useState(0);
   
   // Cycling search phrases
+  const MESSAGE_CYCLE_SPEED = 4000; // milliseconds between phrase changes (4 seconds)
   const [currentSearchPhrase, setCurrentSearchPhrase] = useState('');
   const searchPhrases = [
     "Digging through vinyl crates",
@@ -68,7 +69,7 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
     const phraseInterval = setInterval(() => {
       phraseIndex = (phraseIndex + 1) % searchPhrases.length;
       setCurrentSearchPhrase(searchPhrases[phraseIndex]);
-    }, 1500); // Change phrase every 1.5 seconds
+    }, MESSAGE_CYCLE_SPEED);
 
     try {
       // Use streaming endpoint for real-time feedback
