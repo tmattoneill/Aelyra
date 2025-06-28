@@ -174,16 +174,22 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
   };
 
   const toggleTrackSelection = (trackId) => {
+    console.log('toggleTrackSelection called with:', trackId);
+    console.log('Current selectedTracks:', selectedTracks);
     const newSelection = new Set(selectedTracks);
     if (newSelection.has(trackId)) {
       newSelection.delete(trackId);
+      console.log('Removing track from selection');
     } else {
       newSelection.add(trackId);
+      console.log('Adding track to selection');
     }
     setSelectedTracks(newSelection);
+    console.log('New selection:', newSelection);
   };
 
   const selectAlternative = (originalTrackId, alternativeTrack) => {
+    console.log('selectAlternative called:', { originalTrackId, alternativeTrack });
     const newSelection = new Set(selectedTracks);
     newSelection.delete(originalTrackId);
     newSelection.add(alternativeTrack.spotify_id);

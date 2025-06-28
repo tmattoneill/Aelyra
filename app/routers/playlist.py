@@ -23,6 +23,7 @@ async def _batch_search_spotify_tracks(spotify_service: SpotifyService, suggeste
     Search all suggested tracks on Spotify in batches for better performance
     """
     found_tracks = []
+    seen_track_ids = set()  # Track duplicate Spotify IDs
     batch_size = 15  # Increased batch size for better performance
     
     # Early exit if we have enough tracks for 10 main + alternatives
@@ -38,21 +39,26 @@ async def _batch_search_spotify_tracks(spotify_service: SpotifyService, suggeste
         # Execute batch of searches concurrently
         batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
         
-        # Process results and filter out exceptions
+        # Process results and filter out exceptions and duplicates
         for result in batch_results:
             if not isinstance(result, Exception) and result:
-                found_tracks.append(result)
+                spotify_id = result.get("spotify_id")
+                if spotify_id and spotify_id not in seen_track_ids:
+                    found_tracks.append(result)
+                    seen_track_ids.add(spotify_id)
+                elif spotify_id in seen_track_ids:
+                    logger.debug(f"Skipping duplicate track: {result.get('title')} by {result.get('artist')}")
         
         # Early exit if we have enough tracks
         if len(found_tracks) >= target_tracks:
-            logger.info(f"Early exit: found {len(found_tracks)} tracks, stopping search")
+            logger.info(f"Early exit: found {len(found_tracks)} unique tracks, stopping search")
             break
         
         # Reduced delay for better performance
         if i + batch_size < len(suggested_tracks):
             await asyncio.sleep(0.05)
     
-    logger.info(f"Batch search: {len(found_tracks)} tracks found from {min(len(suggested_tracks), i + batch_size)} searched")
+    logger.info(f"Batch search: {len(found_tracks)} unique tracks found from {min(len(suggested_tracks), i + batch_size)} searched")
     return found_tracks
 
 async def _search_single_track(spotify_service: SpotifyService, search_query: str, original_track: Dict) -> Dict:
@@ -125,12 +131,26 @@ async def _search_single_track(spotify_service: SpotifyService, search_query: st
 def _group_tracks_with_alternatives(spotify_tracks: List[Dict]) -> List[Dict]:
     """
     Group Spotify tracks into 10 main tracks with 4 alternatives each
+    Ensures no duplicate Spotify IDs across main tracks and alternatives
     """
     tracks_with_alternatives = []
+    used_spotify_ids = set()  # Track used Spotify IDs globally
+    
+    # Create a deduplicated list first
+    unique_tracks = []
+    for track in spotify_tracks:
+        spotify_id = track.get("spotify_id")
+        if spotify_id and spotify_id not in used_spotify_ids:
+            unique_tracks.append(track)
+            used_spotify_ids.add(spotify_id)
+    
+    logger.info(f"Deduplicated {len(spotify_tracks)} tracks to {len(unique_tracks)} unique tracks")
+    
+    # Now group the unique tracks
     tracks_per_group = 5  # 1 main + 4 alternatives
     
-    for i in range(0, min(50, len(spotify_tracks)), tracks_per_group):
-        group = spotify_tracks[i:i + tracks_per_group]
+    for i in range(0, min(50, len(unique_tracks)), tracks_per_group):
+        group = unique_tracks[i:i + tracks_per_group]
         
         if not group:
             break
@@ -176,11 +196,12 @@ async def _ensure_minimum_tracks(openai_service, spotify_service, query: str, cu
             new_spotify_tracks = await _batch_search_spotify_tracks(spotify_service, additional_tracks)
             
             # Add them to our collection (avoid duplicates)
-            existing_ids = {track.get("spotify_id") for track in current_tracks}
+            existing_ids = {track.get("spotify_id") for track in current_tracks if track.get("spotify_id")}
             for track in new_spotify_tracks:
-                if track.get("spotify_id") not in existing_ids:
+                spotify_id = track.get("spotify_id")
+                if spotify_id and spotify_id not in existing_ids:
                     current_tracks.append(track)
-                    existing_ids.add(track.get("spotify_id"))
+                    existing_ids.add(spotify_id)
                     
                     # Early exit when we have enough
                     if len(current_tracks) >= min_required:
