@@ -1,6 +1,7 @@
 
 import React, { useState } from 'react';
 import { api } from '../config';
+import SkeletonLoader from './SkeletonLoader';
 
 const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired }) => {
   const [query, setQuery] = useState('');
@@ -117,7 +118,18 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
           setError(errorMsg);
           setRawAiResponse(rawResponse);
         } else {
-          setError(errorDetail);
+          // Provide more helpful error messages
+          let userFriendlyError = errorDetail;
+          if (errorDetail.includes('token expired')) {
+            userFriendlyError = 'Your Spotify session has expired. Please reconnect your account.';
+            setTimeout(() => onTokenExpired(), 2000);
+          } else if (errorDetail.includes('Failed to generate')) {
+            userFriendlyError = 'Unable to generate playlist suggestions. Please try a different description or try again later.';
+          } else if (errorDetail.includes('Failed to search Spotify')) {
+            userFriendlyError = 'Unable to search Spotify for tracks. Please check your connection and try again.';
+          }
+          
+          setError(userFriendlyError);
           setRawAiResponse('');
         }
         setShowRawResponse(false);
@@ -205,22 +217,32 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
           <p>This may take a few moments.</p>
           
           {step === 'input' && tracks.length === 0 && (
-            <div style={{ textAlign: 'center', margin: '20px 0' }}>
-              <video 
-                width="700"
-                autoPlay 
-                loop 
-                muted 
-                style={{ 
-                  borderRadius: '8px',
-                  maxWidth: '100%',
-                  height: 'auto',
-                  border: '1px solid #efefef'
-                }}
-              >
-                <source src="/images/aelyra_thinking.mov" type="video/mp4" />
-                Your browser does not support the video tag.
-              </video>
+            <div>
+              <div style={{ textAlign: 'center', margin: '20px 0' }}>
+                <video 
+                  width="700"
+                  autoPlay 
+                  loop 
+                  muted 
+                  style={{ 
+                    borderRadius: '8px',
+                    maxWidth: '100%',
+                    height: 'auto',
+                    border: '1px solid #efefef'
+                  }}
+                >
+                  <source src="/images/aelyra_thinking.mov" type="video/mp4" />
+                  Your browser does not support the video tag.
+                </video>
+              </div>
+              
+              {/* Show skeleton loading for tracks when we have some progress */}
+              {foundTracks.length === 0 && progressStatus.includes('searching') && (
+                <div style={{ marginTop: '30px' }}>
+                  <h4 style={{ marginBottom: '15px', color: '#B3B3B3' }}>Searching for tracks...</h4>
+                  <SkeletonLoader type="track" count={5} />
+                </div>
+              )}
             </div>
           )}
           

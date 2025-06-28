@@ -23,14 +23,16 @@ async def _batch_search_spotify_tracks(spotify_service: SpotifyService, suggeste
     Search all suggested tracks on Spotify in batches for better performance
     """
     found_tracks = []
-    batch_size = 10  # Process 10 tracks at a time to avoid overwhelming Spotify API
+    batch_size = 15  # Increased batch size for better performance
+    
+    # Early exit if we have enough tracks for 10 main + alternatives
+    target_tracks = 50  # 10 main tracks * 5 (1 main + 4 alternatives)
     
     for i in range(0, len(suggested_tracks), batch_size):
         batch = suggested_tracks[i:i + batch_size]
         batch_tasks = []
         
         for track in batch:
-            # _search_single_track now handles the search strategy internally
             batch_tasks.append(_search_single_track(spotify_service, "", track))
         
         # Execute batch of searches concurrently
@@ -41,11 +43,16 @@ async def _batch_search_spotify_tracks(spotify_service: SpotifyService, suggeste
             if not isinstance(result, Exception) and result:
                 found_tracks.append(result)
         
-        # Small delay between batches to be nice to Spotify API
+        # Early exit if we have enough tracks
+        if len(found_tracks) >= target_tracks:
+            logger.info(f"Early exit: found {len(found_tracks)} tracks, stopping search")
+            break
+        
+        # Reduced delay for better performance
         if i + batch_size < len(suggested_tracks):
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.05)
     
-    logger.info(f"Batch search: {len(found_tracks)} tracks found from {len(suggested_tracks)} suggested")
+    logger.info(f"Batch search: {len(found_tracks)} tracks found from {min(len(suggested_tracks), i + batch_size)} searched")
     return found_tracks
 
 async def _search_single_track(spotify_service: SpotifyService, search_query: str, original_track: Dict) -> Dict:
@@ -150,6 +157,7 @@ def _group_tracks_with_alternatives(spotify_tracks: List[Dict]) -> List[Dict]:
 async def _ensure_minimum_tracks(openai_service, spotify_service, query: str, current_tracks: List[Dict], min_required: int) -> List[Dict]:
     """
     Ensure we have at least the minimum required tracks, generating more if needed
+    Optimized to be more efficient and have better fallback strategies
     """
     if len(current_tracks) >= min_required:
         return current_tracks
@@ -157,14 +165,14 @@ async def _ensure_minimum_tracks(openai_service, spotify_service, query: str, cu
     logger.info(f"Need {min_required - len(current_tracks)} more tracks, generating fallback...")
     
     try:
-        # Generate additional tracks using a simplified approach
-        needed = min_required - len(current_tracks) + 10  # Generate extra for safety
+        # Generate fewer additional tracks initially for faster response
+        needed = min_required - len(current_tracks) + 5  # Reduced extra generation
         
-        # Try a different approach - use a simpler prompt
+        # Try a more focused approach 
         additional_tracks = await openai_service._generate_additional_tracks(query, current_tracks, needed)
         
         if additional_tracks:
-            # Search new tracks on Spotify
+            # Search new tracks on Spotify with smaller batches for faster response
             new_spotify_tracks = await _batch_search_spotify_tracks(spotify_service, additional_tracks)
             
             # Add them to our collection (avoid duplicates)
@@ -174,6 +182,7 @@ async def _ensure_minimum_tracks(openai_service, spotify_service, query: str, cu
                     current_tracks.append(track)
                     existing_ids.add(track.get("spotify_id"))
                     
+                    # Early exit when we have enough
                     if len(current_tracks) >= min_required:
                         break
     
@@ -183,7 +192,8 @@ async def _ensure_minimum_tracks(openai_service, spotify_service, query: str, cu
     # If we still don't have enough, try popular tracks as last resort
     if len(current_tracks) < min_required:
         logger.warning("Using popular tracks as final fallback")
-        popular_tracks = await _get_popular_fallback_tracks(spotify_service, query, min_required - len(current_tracks))
+        needed_popular = min(min_required - len(current_tracks), 10)  # Limit popular fallback
+        popular_tracks = await _get_popular_fallback_tracks(spotify_service, query, needed_popular)
         current_tracks.extend(popular_tracks)
     
     return current_tracks
@@ -274,8 +284,8 @@ async def generate_playlist(request: GeneratePlaylistRequest, db: Session = Depe
         openai_service = OpenAIService()
         spotify_service = SpotifyService(request.spotify_access_token)
         
-        # Generate 50 track suggestions in one bulk call
-        suggested_tracks = await openai_service.generate_track_suggestions(request.query)
+        # Generate 35 track suggestions in one bulk call for faster response
+        suggested_tracks = await openai_service.generate_track_suggestions(request.query, count=35)
         logger.info(f"Generated {len(suggested_tracks)} tracks from OpenAI")
         
         # Search all tracks on Spotify in batches for better performance

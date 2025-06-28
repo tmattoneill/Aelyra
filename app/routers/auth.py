@@ -4,7 +4,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 import os
 import urllib.parse
-import requests
+import httpx
 import secrets
 import base64
 
@@ -17,12 +17,13 @@ router = APIRouter()
 # In-memory storage for state (use Redis in production)
 oauth_states = {}
 
-def get_spotify_user_profile(access_token: str) -> dict:
+async def get_spotify_user_profile(access_token: str) -> dict:
     """Fetch user profile from Spotify API"""
     headers = {"Authorization": f"Bearer {access_token}"}
-    response = requests.get("https://api.spotify.com/v1/me", headers=headers)
-    response.raise_for_status()
-    return response.json()
+    async with httpx.AsyncClient() as client:
+        response = await client.get("https://api.spotify.com/v1/me", headers=headers, timeout=10.0)
+        response.raise_for_status()
+        return response.json()
 
 @router.get("", response_model=AuthResponse)
 async def spotofy_auth_no_slash():
@@ -111,17 +112,19 @@ async def spotify_callback(code: str = None, state: str = None, error: str = Non
     }
     
     try:
-        response = requests.post(
-            "https://accounts.spotify.com/api/token",
-            data=token_data,
-            headers=token_headers
-        )
-        response.raise_for_status()
-        token_info = response.json()
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://accounts.spotify.com/api/token",
+                data=token_data,
+                headers=token_headers,
+                timeout=15.0
+            )
+            response.raise_for_status()
+            token_info = response.json()
         
         # Fetch user profile from Spotify
         try:
-            profile = get_spotify_user_profile(token_info['access_token'])
+            profile = await get_spotify_user_profile(token_info['access_token'])
             
             # Create or update user record
             user_service = UserService(db)
@@ -144,5 +147,5 @@ async def spotify_callback(code: str = None, state: str = None, error: str = Non
         
         return RedirectResponse(url=frontend_url)
         
-    except requests.RequestException as e:
+    except httpx.HTTPError as e:
         raise HTTPException(status_code=500, detail=f"Failed to exchange code for token: {str(e)}")

@@ -31,13 +31,14 @@ class OpenAIService:
             logger.error(f"Failed to load config {filename}: {str(e)}")
             raise ValueError(f"Failed to load configuration file: {filename}")
 
-    async def generate_track_suggestions(self, query: str) -> List[Dict[str, str]]:
+    async def generate_track_suggestions(self, query: str, count: int = 35) -> List[Dict[str, str]]:
         """
-        Generate 50 track suggestions in one bulk call for better performance
+        Generate track suggestions in one bulk call for better performance
+        Reduced default from 50 to 35 for faster initial response
         """
         try:
-            # Build user prompt using system prompt format
-            user_prompt = self.system_prompts["track_generation"]["objective"].format(prompt=query)
+            # Build user prompt using system prompt format with dynamic count
+            user_prompt = self.system_prompts["track_generation"]["objective"].replace("exactly 50 songs", f"exactly {count} songs").format(prompt=query)
             
             # Combine role and rules into system message for better context
             system_content = f"""{self.system_prompts["track_generation"]["role"]}
@@ -49,7 +50,7 @@ Rules:
 - {' '.join(self.system_prompts["track_generation"]["rules"]["recording_type"])}
 - {' '.join(self.system_prompts["track_generation"]["rules"]["playlist_diversity"])}
 
-{self.system_prompts["track_generation"]["system_message"]}"""
+{self.system_prompts["track_generation"]["system_message"].replace("exactly 50 track objects", f"exactly {count} track objects")}"""
 
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -57,7 +58,7 @@ Rules:
                     {"role": "system", "content": system_content},
                     {"role": "user", "content": user_prompt}
                 ],
-                max_completion_tokens=4000,  # Increased for 50 tracks
+                max_completion_tokens=int(count * 80),  # Dynamic based on track count
                 temperature=0.7
             )
 
@@ -124,15 +125,16 @@ Rules:
                     seen_tracks.add(track_key)
                     valid_tracks.append(track)
                     
-                    if len(valid_tracks) >= 50:  # Cap at 50 tracks
+                    if len(valid_tracks) >= count:  # Cap at requested count
                         break
 
                 logger.info(f"Generated {len(valid_tracks)} valid tracks from bulk request")
                 
                 # If we didn't get enough tracks, make additional requests
-                if len(valid_tracks) < 30:  # Minimum threshold for decent playlist
+                min_threshold = max(15, count // 2)  # Dynamic minimum threshold
+                if len(valid_tracks) < min_threshold:
                     logger.warning(f"Only got {len(valid_tracks)} tracks, attempting fallback generation")
-                    additional_tracks = await self._generate_additional_tracks(query, valid_tracks, 50 - len(valid_tracks))
+                    additional_tracks = await self._generate_additional_tracks(query, valid_tracks, count - len(valid_tracks))
                     valid_tracks.extend(additional_tracks)
                 
                 if not valid_tracks:

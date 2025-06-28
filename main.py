@@ -22,13 +22,18 @@ app = FastAPI(
 Base.metadata.create_all(bind=engine)
 
 # CORS middleware for frontend integration
-allowed_origins = os.getenv("CORS_ORIGINS", "*").split(",")
+# Default to secure origins for production, but allow localhost for development
+default_origins = "http://localhost:3000,http://127.0.0.1:3000"
+if os.getenv("DEBUG", "True").lower() == "true":
+    default_origins += ",*"  # Allow all origins in development mode only
+
+allowed_origins = os.getenv("CORS_ORIGINS", default_origins).split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=[origin.strip() for origin in allowed_origins],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # Include routers
