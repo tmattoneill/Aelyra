@@ -281,19 +281,13 @@ def _pad_track_groups(current_groups: List[Dict], all_tracks: List[Dict]) -> Lis
             "alternatives": alternatives
         })
     
-    # If we still don't have 10 groups, duplicate some with fewer alternatives
-    while len(padded_groups) < 10 and current_groups:
-        source_group = current_groups[len(padded_groups) % len(current_groups)]
-        padded_groups.append({
-            "title": source_group["title"],
-            "artist": source_group["artist"],
-            "spotify_id": source_group["spotify_id"],
-            "album_art": source_group.get("album_art"),
-            "preview_url": source_group.get("preview_url"),
-            "alternatives": source_group.get("alternatives", [])[:2]  # Fewer alternatives
-        })
+    # If we still don't have 10 groups, we'll just return what we have
+    # Rather than create duplicates which break React key uniqueness
+    logger.warning(f"Could only create {len(padded_groups)} unique groups instead of 10")
     
-    return padded_groups[:10]  # Ensure exactly 10
+    # Don't create duplicates - this was causing React key conflicts
+    
+    return padded_groups  # Return unique groups only
 
 @router.post("/generate-playlist", response_model=GeneratePlaylistResponse)
 async def generate_playlist(request: GeneratePlaylistRequest, db: Session = Depends(get_db)):
