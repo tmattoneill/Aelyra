@@ -190,11 +190,30 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
     setSelectedTracks(newSelection);
     
     // Update the tracks array to show the selected alternative
-    setTracks(tracks.map(track => 
-      track.spotify_id === originalTrackId 
-        ? { ...alternativeTrack, alternatives: track.alternatives }
-        : track
-    ));
+    setTracks(tracks.map(track => {
+      if (track.spotify_id === originalTrackId) {
+        // Find the original track data
+        const originalTrack = {
+          title: track.title,
+          artist: track.artist,
+          spotify_id: track.spotify_id,
+          album_art: track.album_art,
+          preview_url: track.preview_url
+        };
+        
+        // Remove the selected alternative from alternatives list and add original track
+        const newAlternatives = track.alternatives
+          .filter(alt => alt.spotify_id !== alternativeTrack.spotify_id)
+          .concat([originalTrack]);
+        
+        // Return the alternative as the main track with updated alternatives
+        return {
+          ...alternativeTrack,
+          alternatives: newAlternatives
+        };
+      }
+      return track;
+    }));
   };
 
   const startOver = () => {
