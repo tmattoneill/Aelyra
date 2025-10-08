@@ -4,6 +4,7 @@ import SpotifyAuth from './components/SpotifyAuth';
 import PlaylistGenerator from './components/PlaylistGenerator';
 import UserProfile from './components/UserProfile';
 import PlaylistHistory from './components/PlaylistHistory';
+import PlaylistUpload from './components/PlaylistUpload';
 import { api } from './config';
 import './index.css';
 
@@ -97,16 +98,24 @@ function App() {
     switch (activeTab) {
       case 'generate':
         return (
-          <PlaylistGenerator 
+          <PlaylistGenerator
             spotifyToken={spotifyToken}
             userInfo={userInfo}
             onLogout={handleLogout}
             onTokenExpired={handleTokenExpired}
           />
         );
+      case 'upload':
+        return (
+          <PlaylistUpload
+            spotifyToken={spotifyToken}
+            userInfo={userInfo}
+            onTokenExpired={handleTokenExpired}
+          />
+        );
       case 'profile':
         return (
-          <UserProfile 
+          <UserProfile
             spotifyToken={spotifyToken}
             userInfo={userInfo}
             onProfileUpdate={handleProfileUpdate}
@@ -114,7 +123,7 @@ function App() {
         );
       case 'history':
         return (
-          <PlaylistHistory 
+          <PlaylistHistory
             spotifyToken={spotifyToken}
             userInfo={userInfo}
           />
@@ -185,25 +194,31 @@ function App() {
         <>
           {/* Navigation Tabs */}
           <div className="nav-tabs">
-            <button 
+            <button
               className={`nav-tab ${activeTab === 'generate' ? 'active' : ''}`}
               onClick={() => setActiveTab('generate')}
             >
               Generate Playlist
             </button>
-            <button 
+            <button
+              className={`nav-tab ${activeTab === 'upload' ? 'active' : ''}`}
+              onClick={() => setActiveTab('upload')}
+            >
+              Upload Playlist
+            </button>
+            <button
               className={`nav-tab ${activeTab === 'profile' ? 'active' : ''}`}
               onClick={() => setActiveTab('profile')}
             >
               Account Information
             </button>
-            <button 
+            <button
               className={`nav-tab ${activeTab === 'history' ? 'active' : ''}`}
               onClick={() => setActiveTab('history')}
             >
               Playlist History
             </button>
-            <button 
+            <button
               className="nav-tab logout-tab"
               onClick={handleLogout}
             >

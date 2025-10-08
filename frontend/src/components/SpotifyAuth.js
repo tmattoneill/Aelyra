@@ -46,12 +46,15 @@ const SpotifyAuth = ({ onAuthSuccess }) => {
   const initiateAuth = async () => {
     setLoading(true);
     setError('');
-    
+
     try {
       const response = await api.get('/api/spotify');
       window.location.href = response.data.auth_url;
     } catch (err) {
-      setError('Failed to initiate Spotify authentication');
+      console.error('Spotify auth initiation error:', err);
+      console.error('Error response:', err.response);
+      const errorMessage = err.response?.data?.detail || err.message || 'Failed to initiate Spotify authentication';
+      setError(`Failed to initiate Spotify authentication: ${errorMessage}`);
       setLoading(false);
     }
   };

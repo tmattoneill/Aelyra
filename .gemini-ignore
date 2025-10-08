@@ -1,0 +1,17 @@
+# Common ignores
+.DS_Store
+*.pyc
+*.swp
+
+# Python
+__pycache__/
+.venv/
+
+# Node
+node_modules/
+frontend/dist/
+
+# IDE / Tooling
+.idea/
+.replit/
+.claude/

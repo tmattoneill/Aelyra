@@ -21,3 +21,8 @@ class UpdateProfileRequest(BaseModel):
     last_name: Optional[str] = None
     location: Optional[str] = None
     spotify_access_token: str
+
+class UploadPlaylistRequest(BaseModel):
+    m3u_content: str
+    spotify_access_token: str
+    custom_name: Optional[str] = None

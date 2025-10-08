@@ -6,13 +6,14 @@ from typing import List, Dict, AsyncGenerator
 import logging
 import json
 
-from app.models.requests import GeneratePlaylistRequest, SearchTracksRequest, CreatePlaylistRequest, UpdateProfileRequest
+from app.models.requests import GeneratePlaylistRequest, SearchTracksRequest, CreatePlaylistRequest, UpdateProfileRequest, UploadPlaylistRequest
 from app.models.responses import GeneratePlaylistResponse, ErrorResponse
 from app.services.spotify_service import SpotifyService
 from app.services.openai_service import OpenAIService
 from app.database import get_db
 from app.services.user_service import UserService
 from app.services.playlist_history_service import PlaylistHistoryService
+from app.services.m3u_parser import M3UParser
 import asyncio
 
 router = APIRouter()
@@ -652,5 +653,139 @@ async def get_user_playlists(spotify_access_token: str, limit: int = 20, offset:
     except Exception as e:
         logger.error(f"Error getting user playlists: {str(e)}")
         if "401" in str(e) or "403" in str(e):
+            raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/upload-playlist")
+async def upload_playlist(request: UploadPlaylistRequest, db: Session = Depends(get_db)):
+    """
+    Upload a playlist from an M3U file containing Spotify track URLs
+    """
+    try:
+        # Validate M3U content
+        is_valid, error_msg = M3UParser.validate_file_content(request.m3u_content)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=f"Invalid M3U file: {error_msg}")
+
+        # Parse M3U file
+        try:
+            parsed_data = M3UParser.parse(request.m3u_content)
+            track_ids = parsed_data['track_ids']
+            warnings = parsed_data['warnings']
+
+            logger.info(f"Parsed M3U file: {len(track_ids)} tracks, {len(warnings)} warnings")
+
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        # Initialize Spotify service
+        spotify_service = SpotifyService(request.spotify_access_token)
+
+        # Verify token is valid by getting user profile
+        user_profile = await spotify_service.get_user_profile()
+
+        # Get track details from Spotify to verify they exist
+        try:
+            track_details = await spotify_service.get_tracks_details(track_ids)
+
+            # Filter out tracks that don't exist (None values)
+            valid_tracks = [track for track in track_details if track is not None]
+            valid_track_ids = [track['spotify_id'] for track in valid_tracks]
+
+            if not valid_track_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail="None of the tracks in the M3U file are available on Spotify"
+                )
+
+            # Warn if some tracks were skipped
+            skipped_count = len(track_ids) - len(valid_track_ids)
+            if skipped_count > 0:
+                warnings.append(f"{skipped_count} tracks were not found on Spotify and were skipped")
+                logger.warning(f"Skipped {skipped_count} unavailable tracks")
+
+        except Exception as e:
+            logger.error(f"Error fetching track details: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to verify tracks on Spotify"
+            )
+
+        # Generate playlist name using OpenAI (or use custom name if provided)
+        if request.custom_name and request.custom_name.strip():
+            playlist_name = request.custom_name.strip()
+        else:
+            # Generate AI name based on track metadata
+            try:
+                openai_service = OpenAIService()
+
+                # Create a descriptive query from track artists and names
+                sample_artists = list(set([track['artist'] for track in valid_tracks[:10]]))
+                sample_tracks = [track['name'] for track in valid_tracks[:5]]
+
+                # Create a query for the AI to generate a name
+                query = f"A playlist with {len(valid_track_ids)} tracks featuring artists like {', '.join(sample_artists[:5])}"
+
+                playlist_name = await openai_service.generate_playlist_title(query)
+                logger.info(f"Generated playlist name: {playlist_name}")
+
+            except Exception as e:
+                logger.warning(f"Failed to generate AI playlist name: {str(e)}, using fallback")
+                playlist_name = "Uploaded Playlist"
+
+        # Create playlist in Spotify
+        try:
+            playlist = await spotify_service.create_playlist(
+                playlist_name,
+                f"Uploaded via Aelyra from M3U file ({len(valid_track_ids)} tracks)"
+            )
+
+            # Add tracks to playlist
+            await spotify_service.add_tracks_to_playlist(playlist["id"], valid_track_ids)
+
+        except Exception as e:
+            logger.error(f"Error creating playlist: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create playlist on Spotify: {str(e)}"
+            )
+
+        # Save playlist history
+        try:
+            user_service = UserService(db)
+            user = user_service.get_user_by_spotify_username(user_profile["id"])
+
+            if user:
+                playlist_history_service = PlaylistHistoryService(db)
+                playlist_history_service.create_playlist_history(
+                    user_id=user.id,
+                    playlist_name=playlist_name,
+                    user_description=f"Uploaded from M3U file",
+                    spotify_playlist_id=playlist["id"],
+                    spotify_playlist_url=playlist["external_urls"]["spotify"],
+                    track_data=valid_tracks
+                )
+        except Exception as history_error:
+            # Log the error but don't fail the playlist creation
+            logger.error(f"Error saving playlist history: {str(history_error)}")
+
+        # Return success response
+        return {
+            "success": True,
+            "playlist_id": playlist["id"],
+            "playlist_name": playlist_name,
+            "playlist_url": playlist["external_urls"]["spotify"],
+            "tracks_added": len(valid_track_ids),
+            "tracks_skipped": skipped_count,
+            "warnings": warnings,
+            "message": f"Playlist '{playlist_name}' created successfully with {len(valid_track_ids)} tracks"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error uploading playlist: {str(e)}")
+        # Check if it's a token-related error
+        if "401" in str(e) or "403" in str(e) or "Bad Request" in str(e):
             raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
         raise HTTPException(status_code=500, detail=str(e))
