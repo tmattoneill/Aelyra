@@ -1,10 +1,11 @@
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 class GeneratePlaylistRequest(BaseModel):
     query: str
     spotify_access_token: str
+    track_count: int = Field(default=10, ge=5, le=100, description="Number of tracks to generate (5-100)")
 
 class SearchTracksRequest(BaseModel):
     tracks: list[str]

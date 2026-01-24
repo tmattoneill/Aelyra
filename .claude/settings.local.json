@@ -6,7 +6,10 @@
       "Bash(pkill:*)",
       "Bash(python:*)",
       "Bash(find:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(python3:*)",
+      "Bash(node --check:*)",
+      "Bash(npm run build:*)"
     ],
     "deny": []
   }

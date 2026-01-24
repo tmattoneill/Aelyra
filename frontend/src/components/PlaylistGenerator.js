@@ -5,6 +5,7 @@ import SkeletonLoader from './SkeletonLoader';
 
 const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired }) => {
   const [query, setQuery] = useState('');
+  const [trackCount, setTrackCount] = useState(10);
   const [tracks, setTracks] = useState([]);
   const [selectedTracks, setSelectedTracks] = useState(new Set());
   const [playlistName, setPlaylistName] = useState('');
@@ -18,7 +19,13 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
   // New state for streaming progress
   const [progressStatus, setProgressStatus] = useState('');
   const [foundTracks, setFoundTracks] = useState([]);
-  const [trackCount, setTrackCount] = useState(0);
+  const [currentPass, setCurrentPass] = useState('');
+  const [passProgress, setPassProgress] = useState({
+    analyze: { status: 'pending', message: '' },
+    generate: { status: 'pending', message: '' },
+    validate: { status: 'pending', message: '' },
+    search: { status: 'pending', message: '' }
+  });
 
   // Refs for cleanup (prevent memory leaks)
   const phraseIntervalRef = useRef(null);
@@ -43,6 +50,7 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
       }
     };
   }, []);
+
   const searchPhrases = [
     "Digging through vinyl crates",
     "Matching beats per minute",
@@ -61,9 +69,12 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
     "Reading metadata from cassettes"
   ];
 
+  // Track count presets
+  const trackCountPresets = [10, 25, 50, 100];
+
   // Helper function to check if error is token expiration
   const isTokenExpiredError = (error) => {
-    return error.response?.status === 401 || 
+    return error.response?.status === 401 ||
            error.response?.data?.detail?.includes('token expired') ||
            error.response?.data?.detail?.includes('token expired or invalid');
   };
@@ -90,7 +101,13 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
     setSuccess('');
     setProgressStatus('');
     setFoundTracks([]);
-    setTrackCount(0);
+    setCurrentPass('');
+    setPassProgress({
+      analyze: { status: 'pending', message: '' },
+      generate: { status: 'pending', message: '' },
+      validate: { status: 'pending', message: '' },
+      search: { status: 'pending', message: '' }
+    });
 
     // Start cycling through search phrases
     let phraseIndex = 0;
@@ -110,7 +127,8 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
         },
         body: JSON.stringify({
           query: query.trim(),
-          spotify_access_token: spotifyToken
+          spotify_access_token: spotifyToken,
+          track_count: trackCount
         }),
         signal: abortControllerRef.current.signal
       });
@@ -133,16 +151,35 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6));
-              
-              if (data.type === 'status') {
+
+              if (data.type === 'pass_start') {
+                setCurrentPass(data.pass);
+                setPassProgress(prev => ({
+                  ...prev,
+                  [data.pass]: { status: 'in_progress', message: data.message }
+                }));
+                setProgressStatus(data.message);
+              } else if (data.type === 'pass_progress') {
+                setPassProgress(prev => ({
+                  ...prev,
+                  [data.pass]: { ...prev[data.pass], message: data.message }
+                }));
+                setProgressStatus(data.message);
+              } else if (data.type === 'pass_complete') {
+                setPassProgress(prev => ({
+                  ...prev,
+                  [data.pass]: { status: 'complete', message: data.message }
+                }));
+                setProgressStatus(data.message);
+              } else if (data.type === 'status') {
                 setProgressStatus(data.message);
               } else if (data.type === 'track_found') {
                 setFoundTracks(prev => [...prev, data.track]);
-                setTrackCount(data.count);
                 setProgressStatus(`Found ${data.count} tracks...`);
               } else if (data.type === 'complete') {
                 setTracks(data.playlist.tracks);
                 setPlaylistName(data.playlist.playlist_name);
+                // Select all tracks by default
                 setSelectedTracks(new Set(data.playlist.tracks.map(track => track.spotify_id)));
                 setStep('generated');
                 setLoading(false);
@@ -173,7 +210,8 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
       try {
         const response = await api.post('/api/generate-playlist', {
           query: query.trim(),
-          spotify_access_token: spotifyToken
+          spotify_access_token: spotifyToken,
+          track_count: trackCount
         });
 
         setTracks(response.data.tracks);
@@ -250,62 +288,92 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
   };
 
   const toggleTrackSelection = (trackId) => {
-    console.log('toggleTrackSelection called with:', trackId);
-    console.log('Current selectedTracks:', selectedTracks);
     const newSelection = new Set(selectedTracks);
     if (newSelection.has(trackId)) {
       newSelection.delete(trackId);
-      console.log('Removing track from selection');
     } else {
       newSelection.add(trackId);
-      console.log('Adding track to selection');
     }
     setSelectedTracks(newSelection);
-    console.log('New selection:', newSelection);
   };
 
-  const selectAlternative = (originalTrackId, alternativeTrack) => {
-    console.log('selectAlternative called:', { originalTrackId, alternativeTrack });
-    const newSelection = new Set(selectedTracks);
-    newSelection.delete(originalTrackId);
-    newSelection.add(alternativeTrack.spotify_id);
-    setSelectedTracks(newSelection);
-    
-    // Update the tracks array to show the selected alternative
-    setTracks(tracks.map(track => {
-      if (track.spotify_id === originalTrackId) {
-        // Find the original track data
-        const originalTrack = {
-          title: track.title,
-          artist: track.artist,
-          spotify_id: track.spotify_id,
-          album_art: track.album_art,
-          preview_url: track.preview_url
-        };
-        
-        // Remove the selected alternative from alternatives list and add original track
-        const newAlternatives = track.alternatives
-          .filter(alt => alt.spotify_id !== alternativeTrack.spotify_id)
-          .concat([originalTrack]);
-        
-        // Return the alternative as the main track with updated alternatives
-        return {
-          ...alternativeTrack,
-          alternatives: newAlternatives
-        };
-      }
-      return track;
-    }));
+  const selectAll = () => {
+    setSelectedTracks(new Set(tracks.map(track => track.spotify_id)));
+  };
+
+  const deselectAll = () => {
+    setSelectedTracks(new Set());
   };
 
   const startOver = () => {
     setQuery('');
+    setTrackCount(10);
     setTracks([]);
     setSelectedTracks(new Set());
     setPlaylistName('');
     setError('');
     setSuccess('');
     setStep('input');
+  };
+
+  // Pass progress indicator component
+  const PassProgressIndicator = () => {
+    const passes = [
+      { key: 'analyze', label: 'Analyze', icon: '1' },
+      { key: 'generate', label: 'Generate', icon: '2' },
+      { key: 'validate', label: 'Validate', icon: '3' },
+      { key: 'search', label: 'Search', icon: '4' }
+    ];
+
+    return (
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        gap: '20px',
+        marginBottom: '20px',
+        flexWrap: 'wrap'
+      }}>
+        {passes.map((pass, index) => {
+          const status = passProgress[pass.key].status;
+          const isActive = status === 'in_progress';
+          const isComplete = status === 'complete';
+
+          return (
+            <div key={pass.key} style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              opacity: status === 'pending' ? 0.4 : 1,
+              transition: 'opacity 0.3s'
+            }}>
+              <div style={{
+                width: '36px',
+                height: '36px',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: isComplete ? '#1db954' : isActive ? '#1db954' : '#333',
+                color: 'white',
+                fontWeight: 'bold',
+                fontSize: '14px',
+                marginBottom: '6px',
+                animation: isActive ? 'pulse 1.5s infinite' : 'none'
+              }}>
+                {isComplete ? '\u2713' : pass.icon}
+              </div>
+              <span style={{
+                fontSize: '12px',
+                color: isActive || isComplete ? '#1db954' : '#888',
+                fontWeight: isActive ? 'bold' : 'normal'
+              }}>
+                {pass.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   if (loading) {
@@ -316,16 +384,32 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
             {step === 'input' ? 'Generating your playlist...' : 'Creating playlist in Spotify...'}
           </h3>
           <p>{step === 'input' ? currentSearchPhrase : 'Adding tracks to your Spotify account...'}</p>
-          
+
           {step === 'input' && tracks.length === 0 && (
             <div>
+              {/* Pass progress indicator */}
+              <PassProgressIndicator />
+
+              {/* Current pass message */}
+              {progressStatus && (
+                <p style={{
+                  color: '#1db954',
+                  fontSize: '14px',
+                  marginBottom: '15px',
+                  textAlign: 'center',
+                  fontWeight: '500'
+                }}>
+                  {progressStatus}
+                </p>
+              )}
+
               <div style={{ textAlign: 'center', margin: '20px 0' }}>
-                <video 
+                <video
                   width="700"
-                  autoPlay 
-                  loop 
-                  muted 
-                  style={{ 
+                  autoPlay
+                  loop
+                  muted
+                  style={{
                     borderRadius: '8px',
                     maxWidth: '100%',
                     height: 'auto',
@@ -336,9 +420,9 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
                   Your browser does not support the video tag.
                 </video>
               </div>
-              
-              {/* Show skeleton loading for tracks when we have some progress */}
-              {foundTracks.length === 0 && progressStatus.includes('searching') && (
+
+              {/* Show skeleton loading for tracks when searching */}
+              {currentPass === 'search' && foundTracks.length === 0 && (
                 <div style={{ marginTop: '30px' }}>
                   <h4 style={{ marginBottom: '15px', color: '#B3B3B3' }}>Searching for tracks...</h4>
                   <SkeletonLoader type="track" count={5} />
@@ -346,81 +430,80 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
               )}
             </div>
           )}
-          
-          {step === 'input' && (
+
+          {step === 'input' && foundTracks.length > 0 && (
             <div style={{ marginTop: '20px' }}>
-              {progressStatus && (
-                <p style={{ color: '#666', fontSize: '14px', marginBottom: '15px' }}>
-                  {progressStatus}
-                </p>
-              )}
-              
-              {foundTracks.length > 0 && (
-                <div style={{ 
-                  maxHeight: '300px', 
-                  overflowY: 'auto',
-                  border: '1px solid #eee',
-                  borderRadius: '8px',
-                  padding: '10px',
-                  backgroundColor: '#fafafa'
+              <div style={{
+                maxHeight: '300px',
+                overflowY: 'auto',
+                border: '1px solid #eee',
+                borderRadius: '8px',
+                padding: '10px',
+                backgroundColor: '#fafafa'
+              }}>
+                <p style={{
+                  fontSize: '12px',
+                  color: '#888',
+                  margin: '0 0 10px 0',
+                  textAlign: 'center'
                 }}>
-                  <p style={{ 
-                    fontSize: '12px', 
-                    color: '#888', 
-                    margin: '0 0 10px 0',
-                    textAlign: 'center' 
+                  Found {foundTracks.length} tracks:
+                </p>
+                {foundTracks.slice(-8).map((track, index) => (
+                  <div key={index} style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    marginBottom: '8px',
+                    padding: '5px',
+                    backgroundColor: 'white',
+                    borderRadius: '4px',
+                    fontSize: '12px'
                   }}>
-                    Latest tracks found:
-                  </p>
-                  {foundTracks.slice(-5).map((track, index) => (
-                    <div key={index} style={{ 
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      marginBottom: '8px',
-                      padding: '5px',
-                      backgroundColor: 'white',
-                      borderRadius: '4px',
-                      fontSize: '12px'
-                    }}>
-                      {track.album_art && (
-                        <img 
-                          src={track.album_art} 
-                          alt={track.title}
-                          style={{ 
-                            width: '30px', 
-                            height: '30px', 
-                            borderRadius: '4px',
-                            marginRight: '8px',
-                            objectFit: 'cover'
-                          }}
-                        />
-                      )}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ 
-                          fontWeight: '500', 
-                          color: '#333',
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis'
-                        }}>
-                          {track.title}
-                        </div>
-                        <div style={{ 
-                          color: '#666',
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis'
-                        }}>
-                          {track.artist}
-                        </div>
+                    {track.album_art && (
+                      <img
+                        src={track.album_art}
+                        alt={track.title}
+                        style={{
+                          width: '30px',
+                          height: '30px',
+                          borderRadius: '4px',
+                          marginRight: '8px',
+                          objectFit: 'cover'
+                        }}
+                      />
+                    )}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        fontWeight: '500',
+                        color: '#333',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis'
+                      }}>
+                        {track.title}
+                      </div>
+                      <div style={{
+                        color: '#666',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis'
+                      }}>
+                        {track.artist}
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
+        <style>{`
+          @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(29, 185, 84, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(29, 185, 84, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(29, 185, 84, 0); }
+          }
+        `}</style>
       </div>
     );
   }
@@ -457,18 +540,78 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
             />
           </div>
 
+          {/* Track count selector */}
+          <div className="form-group" style={{ marginTop: '20px' }}>
+            <label htmlFor="trackCount">Number of Tracks: <strong>{trackCount}</strong></label>
+
+            {/* Quick preset buttons */}
+            <div style={{
+              display: 'flex',
+              gap: '10px',
+              marginBottom: '12px',
+              flexWrap: 'wrap'
+            }}>
+              {trackCountPresets.map(preset => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => setTrackCount(preset)}
+                  style={{
+                    padding: '8px 16px',
+                    border: trackCount === preset ? '2px solid #1db954' : '1px solid #ddd',
+                    borderRadius: '20px',
+                    backgroundColor: trackCount === preset ? '#1db954' : 'white',
+                    color: trackCount === preset ? 'white' : '#333',
+                    cursor: 'pointer',
+                    fontWeight: trackCount === preset ? 'bold' : 'normal',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  {preset} tracks
+                </button>
+              ))}
+            </div>
+
+            {/* Slider */}
+            <input
+              type="range"
+              id="trackCount"
+              min="5"
+              max="100"
+              value={trackCount}
+              onChange={(e) => setTrackCount(parseInt(e.target.value))}
+              style={{
+                width: '100%',
+                height: '8px',
+                borderRadius: '4px',
+                background: `linear-gradient(to right, #1db954 ${(trackCount - 5) / 95 * 100}%, #ddd ${(trackCount - 5) / 95 * 100}%)`,
+                outline: 'none',
+                cursor: 'pointer'
+              }}
+            />
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              fontSize: '12px',
+              color: '#888',
+              marginTop: '4px'
+            }}>
+              <span>5</span>
+              <span>100</span>
+            </div>
+          </div>
 
           {error && (
             <div className="error">
               {error}
               {rawAiResponse && (
                 <div style={{ marginTop: '10px' }}>
-                  <button 
+                  <button
                     onClick={() => setShowRawResponse(!showRawResponse)}
-                    style={{ 
-                      background: 'none', 
-                      border: '1px solid #ccc', 
-                      padding: '5px 10px', 
+                    style={{
+                      background: 'none',
+                      border: '1px solid #ccc',
+                      padding: '5px 10px',
                       borderRadius: '4px',
                       cursor: 'pointer',
                       fontSize: '12px'
@@ -477,10 +620,10 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
                     {showRawResponse ? 'Hide' : 'Show'} AI Response
                   </button>
                   {showRawResponse && (
-                    <div style={{ 
-                      marginTop: '10px', 
-                      padding: '10px', 
-                      backgroundColor: '#f5f5f5', 
+                    <div style={{
+                      marginTop: '10px',
+                      padding: '10px',
+                      backgroundColor: '#f5f5f5',
                       border: '1px solid #ddd',
                       borderRadius: '4px',
                       fontSize: '12px',
@@ -506,39 +649,79 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
       {step === 'generated' && tracks.length > 0 && (
         <div className="card">
           <h2>"{playlistName}"</h2>
-          <p style={{ marginBottom: '20px', color: '#666' }}>
-            Here are the tracks we found for you. Select the ones you want to include, 
-            or click on alternatives to swap them out.
+          <p style={{ marginBottom: '10px', color: '#666' }}>
+            Here are {tracks.length} tracks we found for you. Uncheck any you don't want to include.
           </p>
 
+          {/* Selection controls */}
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '15px',
+            padding: '10px',
+            backgroundColor: '#f5f5f5',
+            borderRadius: '8px'
+          }}>
+            <span style={{ color: '#666' }}>
+              {selectedTracks.size} of {tracks.length} tracks selected
+            </span>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={selectAll}
+                style={{
+                  padding: '6px 12px',
+                  border: '1px solid #1db954',
+                  borderRadius: '4px',
+                  backgroundColor: 'white',
+                  color: '#1db954',
+                  cursor: 'pointer',
+                  fontSize: '12px'
+                }}
+              >
+                Select All
+              </button>
+              <button
+                onClick={deselectAll}
+                style={{
+                  padding: '6px 12px',
+                  border: '1px solid #999',
+                  borderRadius: '4px',
+                  backgroundColor: 'white',
+                  color: '#666',
+                  cursor: 'pointer',
+                  fontSize: '12px'
+                }}
+              >
+                Deselect All
+              </button>
+            </div>
+          </div>
+
           <div className="track-list">
-            {tracks.map((track) => (
-              <div key={track.spotify_id} className={`track-item ${selectedTracks.has(track.spotify_id) ? 'selected' : ''}`}>
+            {tracks.map((track, index) => (
+              <div
+                key={track.spotify_id}
+                className={`track-item ${selectedTracks.has(track.spotify_id) ? 'selected' : ''}`}
+                style={{ opacity: selectedTracks.has(track.spotify_id) ? 1 : 0.6 }}
+              >
+                <span style={{
+                  minWidth: '24px',
+                  color: '#888',
+                  fontSize: '12px',
+                  marginRight: '10px'
+                }}>
+                  {index + 1}
+                </span>
                 {track.album_art && (
                   <img src={track.album_art} alt={track.title} className="track-artwork" />
                 )}
                 <div className="track-info">
                   <div className="track-title">{track.title}</div>
                   <div className="track-artist">{track.artist}</div>
-                  
-                  {track.alternatives && track.alternatives.length > 0 && (
-                    <div className="alternatives">
-                      <h4>Alternative versions:</h4>
-                      {track.alternatives.map((alt, index) => (
-                        <div 
-                          key={alt.spotify_id} 
-                          className="alternative-item"
-                          onClick={() => selectAlternative(track.spotify_id, alt)}
-                        >
-                          {alt.album_art && (
-                            <img src={alt.album_art} alt={alt.title} className="alternative-artwork" />
-                          )}
-                          <div>
-                            <div style={{ fontSize: '14px', fontWeight: '500' }}>{alt.title}</div>
-                            <div style={{ fontSize: '12px', color: '#666' }}>{alt.artist}</div>
-                          </div>
-                        </div>
-                      ))}
+                  {track.album && track.album !== 'Unknown Album' && (
+                    <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>
+                      {track.album}
                     </div>
                   )}
                 </div>
@@ -553,18 +736,18 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
           </div>
 
           <div style={{ marginTop: '30px', textAlign: 'center' }}>
-            
+
             {error && (
               <div className="error">
                 {error}
                 {rawAiResponse && (
                   <div style={{ marginTop: '10px' }}>
-                    <button 
+                    <button
                       onClick={() => setShowRawResponse(!showRawResponse)}
-                      style={{ 
-                        background: 'none', 
-                        border: '1px solid #ccc', 
-                        padding: '5px 10px', 
+                      style={{
+                        background: 'none',
+                        border: '1px solid #ccc',
+                        padding: '5px 10px',
                         borderRadius: '4px',
                         cursor: 'pointer',
                         fontSize: '12px'
@@ -573,10 +756,10 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
                       {showRawResponse ? 'Hide' : 'Show'} AI Response
                     </button>
                     {showRawResponse && (
-                      <div style={{ 
-                        marginTop: '10px', 
-                        padding: '10px', 
-                        backgroundColor: '#f5f5f5', 
+                      <div style={{
+                        marginTop: '10px',
+                        padding: '10px',
+                        backgroundColor: '#f5f5f5',
                         border: '1px solid #ddd',
                         borderRadius: '4px',
                         fontSize: '12px',
@@ -592,9 +775,9 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
                 )}
               </div>
             )}
-            
+
             <button className="btn" onClick={createPlaylist} disabled={selectedTracks.size === 0 || loading}>
-              {loading ? 'Creating Playlist...' : 'Create Playlist in Spotify'}
+              {loading ? 'Creating Playlist...' : `Create Playlist in Spotify (${selectedTracks.size} tracks)`}
             </button>
             <button className="btn btn-secondary" onClick={startOver}>
               Start Over
@@ -607,7 +790,7 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
         <div className="card">
           <h2>Playlist Created!</h2>
           {success && <div className="success">{success}</div>}
-          
+
           <div style={{ textAlign: 'center', marginTop: '30px' }}>
             <button className="btn" onClick={startOver}>
               Create Another Playlist

@@ -6,6 +6,7 @@ class Track(BaseModel):
     title: str
     artist: str
     spotify_id: str
+    album: Optional[str] = None
     album_art: Optional[str] = None
     preview_url: Optional[str] = None
     alternatives: Optional[List['Track']] = None

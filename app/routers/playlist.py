@@ -10,7 +10,7 @@ import httpx
 from app.models.requests import GeneratePlaylistRequest, SearchTracksRequest, CreatePlaylistRequest, UpdateProfileRequest, UploadPlaylistRequest
 from app.models.responses import GeneratePlaylistResponse, ErrorResponse
 from app.services.spotify_service import SpotifyService
-from app.services.openai_service import OpenAIService
+from app.services.openai_service import OpenAIService, QueryAnalysis
 from app.database import get_db
 from app.services.user_service import UserService
 from app.services.playlist_history_service import PlaylistHistoryService
@@ -20,27 +20,41 @@ import asyncio
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-async def _batch_search_spotify_tracks(spotify_service: SpotifyService, suggested_tracks: List[Dict]) -> List[Dict]:
+
+# ==========================================================================
+# SPOTIFY TRACK SEARCH HELPERS
+# ==========================================================================
+
+async def _batch_search_spotify_tracks(
+    spotify_service: SpotifyService,
+    suggested_tracks: List[Dict],
+    target_count: int = None
+) -> List[Dict]:
     """
-    Search all suggested tracks on Spotify in batches for better performance
+    Search all suggested tracks on Spotify in batches for better performance.
+
+    Args:
+        spotify_service: Spotify service instance
+        suggested_tracks: List of track suggestions from OpenAI
+        target_count: Optional target number of tracks (for early exit optimization)
+
+    Returns:
+        List of found Spotify tracks
     """
     found_tracks = []
     seen_track_ids = set()  # Track duplicate Spotify IDs
     batch_size = 15  # Increased batch size for better performance
-    
-    # Early exit if we have enough tracks for 10 main + alternatives
-    target_tracks = 50  # 10 main tracks * 5 (1 main + 4 alternatives)
-    
+
     for i in range(0, len(suggested_tracks), batch_size):
         batch = suggested_tracks[i:i + batch_size]
         batch_tasks = []
-        
+
         for track in batch:
             batch_tasks.append(_search_single_track(spotify_service, "", track))
-        
+
         # Execute batch of searches concurrently
         batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
-        
+
         # Process results and filter out exceptions and duplicates
         for result in batch_results:
             if not isinstance(result, Exception) and result:
@@ -50,17 +64,18 @@ async def _batch_search_spotify_tracks(spotify_service: SpotifyService, suggeste
                     seen_track_ids.add(spotify_id)
                 elif spotify_id in seen_track_ids:
                     logger.debug(f"Skipping duplicate track: {result.get('title')} by {result.get('artist')}")
-        
+
         # Early exit if we have enough tracks
-        if len(found_tracks) >= target_tracks:
+        if target_count and len(found_tracks) >= target_count:
             logger.info(f"Early exit: found {len(found_tracks)} unique tracks, stopping search")
             break
-        
+
         # Reduced delay for better performance
         if i + batch_size < len(suggested_tracks):
             await asyncio.sleep(0.05)
-    
-    logger.info(f"Batch search: {len(found_tracks)} unique tracks found from {min(len(suggested_tracks), i + batch_size)} searched")
+
+    tracks_searched = min(len(suggested_tracks), i + batch_size) if suggested_tracks else 0
+    logger.info(f"Batch search: {len(found_tracks)} unique tracks found from {tracks_searched} searched")
     return found_tracks
 
 async def _search_single_track(spotify_service: SpotifyService, search_query: str, original_track: Dict) -> Dict:
@@ -130,73 +145,69 @@ async def _search_single_track(spotify_service: SpotifyService, search_query: st
         logger.warning(f"Spotify search failed for '{track_name}' by '{artist}': {str(e)}")
         return None
 
-def _group_tracks_with_alternatives(spotify_tracks: List[Dict]) -> List[Dict]:
+def _format_spotify_tracks(spotify_tracks: List[Dict]) -> List[Dict]:
     """
-    Group Spotify tracks into 10 main tracks with 4 alternatives each
-    Ensures no duplicate Spotify IDs across main tracks and alternatives
+    Format Spotify tracks for the response.
+    Ensures consistent format and removes duplicates.
     """
-    tracks_with_alternatives = []
-    used_spotify_ids = set()  # Track used Spotify IDs globally
-    
-    # Create a deduplicated list first
-    unique_tracks = []
+    formatted_tracks = []
+    seen_ids = set()
+
     for track in spotify_tracks:
         spotify_id = track.get("spotify_id")
-        if spotify_id and spotify_id not in used_spotify_ids:
-            unique_tracks.append(track)
-            used_spotify_ids.add(spotify_id)
-    
-    logger.info(f"Deduplicated {len(spotify_tracks)} tracks to {len(unique_tracks)} unique tracks")
-    
-    # Now group the unique tracks
-    tracks_per_group = 5  # 1 main + 4 alternatives
-    
-    for i in range(0, min(50, len(unique_tracks)), tracks_per_group):
-        group = unique_tracks[i:i + tracks_per_group]
-        
-        if not group:
-            break
-            
-        # First track is the main track
-        main_track = group[0]
-        alternatives = group[1:5]  # Up to 4 alternatives
-        
-        tracks_with_alternatives.append({
-            "title": main_track["title"],
-            "artist": main_track["artist"], 
-            "spotify_id": main_track["spotify_id"],
-            "album_art": main_track.get("album_art"),
-            "preview_url": main_track.get("preview_url"),
-            "alternatives": alternatives
-        })
-        
-        # Stop once we have 10 groups
-        if len(tracks_with_alternatives) >= 10:
-            break
-    
-    return tracks_with_alternatives
+        if spotify_id and spotify_id not in seen_ids:
+            formatted_tracks.append({
+                "title": track.get("title", "Unknown"),
+                "artist": track.get("artist", "Unknown"),
+                "album": track.get("album", "Unknown Album"),
+                "spotify_id": spotify_id,
+                "album_art": track.get("album_art"),
+                "preview_url": track.get("preview_url")
+            })
+            seen_ids.add(spotify_id)
 
-async def _ensure_minimum_tracks(openai_service, spotify_service, query: str, current_tracks: List[Dict], min_required: int) -> List[Dict]:
+    return formatted_tracks
+
+async def _ensure_minimum_tracks(
+    openai_service,
+    spotify_service,
+    analysis: QueryAnalysis,
+    current_tracks: List[Dict],
+    min_required: int
+) -> List[Dict]:
     """
-    Ensure we have at least the minimum required tracks, generating more if needed
-    Optimized to be more efficient and have better fallback strategies
+    Ensure we have at least the minimum required tracks, generating more if needed.
+    Uses the QueryAnalysis for better targeted generation.
     """
     if len(current_tracks) >= min_required:
         return current_tracks
-    
+
     logger.info(f"Need {min_required - len(current_tracks)} more tracks, generating fallback...")
-    
+
     try:
-        # Generate fewer additional tracks initially for faster response
-        needed = min_required - len(current_tracks) + 5  # Reduced extra generation
-        
-        # Try a more focused approach 
-        additional_tracks = await openai_service._generate_additional_tracks(query, current_tracks, needed)
-        
+        # Generate additional tracks using the analysis
+        needed = min_required - len(current_tracks) + 5
+
+        # Convert current tracks to format expected by OpenAI service
+        existing_ai_tracks = [
+            {"track_name": t.get("title"), "artist": t.get("artist")}
+            for t in current_tracks
+        ]
+
+        additional_tracks = await openai_service.generate_tracks_from_analysis(
+            analysis,
+            needed,
+            existing_ai_tracks
+        )
+
         if additional_tracks:
-            # Search new tracks on Spotify with smaller batches for faster response
-            new_spotify_tracks = await _batch_search_spotify_tracks(spotify_service, additional_tracks)
-            
+            # Search new tracks on Spotify
+            new_spotify_tracks = await _batch_search_spotify_tracks(
+                spotify_service,
+                additional_tracks,
+                target_count=needed
+            )
+
             # Add them to our collection (avoid duplicates)
             existing_ids = {track.get("spotify_id") for track in current_tracks if track.get("spotify_id")}
             for track in new_spotify_tracks:
@@ -204,21 +215,24 @@ async def _ensure_minimum_tracks(openai_service, spotify_service, query: str, cu
                 if spotify_id and spotify_id not in existing_ids:
                     current_tracks.append(track)
                     existing_ids.add(spotify_id)
-                    
+
                     # Early exit when we have enough
                     if len(current_tracks) >= min_required:
                         break
-    
+
     except Exception as e:
         logger.error(f"Fallback generation failed: {str(e)}")
-    
+
     # If we still don't have enough, try popular tracks as last resort
     if len(current_tracks) < min_required:
         logger.warning("Using popular tracks as final fallback")
-        needed_popular = min(min_required - len(current_tracks), 10)  # Limit popular fallback
-        popular_tracks = await _get_popular_fallback_tracks(spotify_service, query, needed_popular)
+        # Build a query from analysis for fallback
+        fallback_parts = analysis.genres[:2] + analysis.moods[:2]
+        fallback_query = " ".join(fallback_parts) if fallback_parts else "popular music"
+        needed_popular = min(min_required - len(current_tracks), 10)
+        popular_tracks = await _get_popular_fallback_tracks(spotify_service, fallback_query, needed_popular)
         current_tracks.extend(popular_tracks)
-    
+
     return current_tracks
 
 async def _get_popular_fallback_tracks(spotify_service, query: str, count: int) -> List[Dict]:
@@ -252,84 +266,60 @@ async def _get_popular_fallback_tracks(spotify_service, query: str, count: int) 
         logger.error(f"Popular fallback failed: {str(e)}")
         return []
 
-def _pad_track_groups(current_groups: List[Dict], all_tracks: List[Dict]) -> List[Dict]:
-    """
-    Pad track groups to ensure we have exactly 10 groups
-    """
-    padded_groups = current_groups.copy()
-    used_track_ids = set()
-    
-    # Collect all already used track IDs
-    for group in current_groups:
-        used_track_ids.add(group["spotify_id"])
-        for alt in group.get("alternatives", []):
-            used_track_ids.add(alt.get("spotify_id"))
-    
-    # Find unused tracks
-    unused_tracks = [track for track in all_tracks if track.get("spotify_id") not in used_track_ids]
-    
-    # Create additional groups from unused tracks
-    while len(padded_groups) < 10 and unused_tracks:
-        main_track = unused_tracks.pop(0)
-        alternatives = unused_tracks[:4]
-        unused_tracks = unused_tracks[4:]
-        
-        padded_groups.append({
-            "title": main_track["title"],
-            "artist": main_track["artist"],
-            "spotify_id": main_track["spotify_id"],
-            "album_art": main_track.get("album_art"),
-            "preview_url": main_track.get("preview_url"),
-            "alternatives": alternatives
-        })
-    
-    # If we still don't have 10 groups, we'll just return what we have
-    # Rather than create duplicates which break React key uniqueness
-    logger.warning(f"Could only create {len(padded_groups)} unique groups instead of 10")
-    
-    # Don't create duplicates - this was causing React key conflicts
-    
-    return padded_groups  # Return unique groups only
 
 @router.post("/generate-playlist", response_model=GeneratePlaylistResponse)
 async def generate_playlist(request: GeneratePlaylistRequest, db: Session = Depends(get_db)):
     """
-    Main endpoint: Generate a playlist based on natural language query using bulk generation
+    Main endpoint: Generate a playlist based on natural language query using multi-pass agentic approach.
+
+    The generation follows three passes:
+    1. ANALYZE: Parse the query to extract genres, moods, eras, themes, etc.
+    2. GENERATE: Create track suggestions based on the analysis
+    3. VALIDATE: Ensure diversity (max 2 tracks per artist, no duplicates)
     """
     try:
         # Initialize services
         openai_service = OpenAIService()
         spotify_service = SpotifyService(request.spotify_access_token)
-        
-        # Generate 35 track suggestions in one bulk call for faster response
-        suggested_tracks = await openai_service.generate_track_suggestions(request.query, count=35)
-        logger.info(f"Generated {len(suggested_tracks)} tracks from OpenAI")
-        
-        # Search all tracks on Spotify in batches for better performance
-        spotify_tracks = await _batch_search_spotify_tracks(spotify_service, suggested_tracks)
+
+        # Use the new agentic multi-pass generation
+        suggested_tracks, analysis = await openai_service.generate_playlist_agentic(
+            query=request.query,
+            track_count=request.track_count
+        )
+        logger.info(f"Generated {len(suggested_tracks)} tracks from agentic generation")
+
+        # Search all tracks on Spotify
+        spotify_tracks = await _batch_search_spotify_tracks(
+            spotify_service,
+            suggested_tracks,
+            target_count=request.track_count
+        )
         logger.info(f"Found {len(spotify_tracks)} tracks on Spotify")
-        
-        # Ensure we have enough tracks, with fallback generation if needed
-        spotify_tracks = await _ensure_minimum_tracks(openai_service, spotify_service, request.query, spotify_tracks, min_required=10)
-        logger.info(f"Final track count after fallbacks: {len(spotify_tracks)}")
-        
-        # Group tracks into main tracks + alternatives (10 groups of 5 tracks each)
-        tracks_with_alternatives = _group_tracks_with_alternatives(spotify_tracks)
-        logger.info(f"Created {len(tracks_with_alternatives)} track groups")
-        
-        # Final safety check - ensure we have exactly 10 groups
-        if len(tracks_with_alternatives) < 10:
-            logger.warning(f"Only created {len(tracks_with_alternatives)} groups, padding to 10")
-            tracks_with_alternatives = _pad_track_groups(tracks_with_alternatives, spotify_tracks)
-        
+
+        # Ensure we have enough tracks
+        if len(spotify_tracks) < request.track_count:
+            spotify_tracks = await _ensure_minimum_tracks(
+                openai_service,
+                spotify_service,
+                analysis,
+                spotify_tracks,
+                min_required=request.track_count
+            )
+            logger.info(f"Final track count after fallbacks: {len(spotify_tracks)}")
+
+        # Format tracks for response (no alternatives, just flat list)
+        formatted_tracks = _format_spotify_tracks(spotify_tracks[:request.track_count])
+        logger.info(f"Returning {len(formatted_tracks)} formatted tracks")
+
         # Generate playlist title
         playlist_name = await openai_service.generate_playlist_title(request.query)
-        
+
         return GeneratePlaylistResponse(
             playlist_name=playlist_name,
-            tracks=tracks_with_alternatives
+            tracks=formatted_tracks
         )
-        
+
     except Exception as e:
         logger.error(f"Error generating playlist: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -337,64 +327,121 @@ async def generate_playlist(request: GeneratePlaylistRequest, db: Session = Depe
 @router.post("/generate-playlist-stream")
 async def generate_playlist_stream(request: GeneratePlaylistRequest, db: Session = Depends(get_db)):
     """
-    Streaming endpoint for real-time playlist generation feedback
+    Streaming endpoint for real-time playlist generation feedback.
+    Uses multi-pass agentic approach with progress updates for each pass:
+    1. ANALYZE: Parse the query
+    2. GENERATE: Create track suggestions
+    3. VALIDATE: Ensure diversity
+    4. SEARCH: Find tracks on Spotify
     """
     async def generate_with_progress() -> AsyncGenerator[str, None]:
+        analysis = None
+
         try:
             # Initialize services
             openai_service = OpenAIService()
             spotify_service = SpotifyService(request.spotify_access_token)
-            
-            # Send initial status
-            yield f"data: {json.dumps({'type': 'status', 'message': 'Generating track suggestions...'})}\n\n"
-            
-            # Generate 50 track suggestions in one bulk call
-            suggested_tracks = await openai_service.generate_track_suggestions(request.query)
-            yield f"data: {json.dumps({'type': 'status', 'message': f'Generated {len(suggested_tracks)} track suggestions, searching Spotify...'})}\n\n"
-            
-            # Search tracks with progress updates
+
+            # Track progress events to send to client
+            progress_events = []
+
+            async def progress_callback(pass_name: str, message: str):
+                event = {
+                    'type': 'pass_progress',
+                    'pass': pass_name,
+                    'message': message
+                }
+                progress_events.append(event)
+
+            # PASS 1: Analyze the query
+            yield f"data: {json.dumps({'type': 'pass_start', 'pass': 'analyze', 'message': 'Analyzing your music preferences...'})}\n\n"
+
+            analysis = await openai_service.analyze_query(request.query)
+            genres_str = ', '.join(analysis.genres[:3]) if analysis.genres else 'various genres'
+            moods_str = ', '.join(analysis.moods[:2]) if analysis.moods else 'mixed moods'
+            analysis_summary = f"Found: {genres_str} / {moods_str}"
+            yield f"data: {json.dumps({'type': 'pass_complete', 'pass': 'analyze', 'message': analysis_summary})}\n\n"
+
+            # PASS 2: Generate tracks
+            yield f"data: {json.dumps({'type': 'pass_start', 'pass': 'generate', 'message': f'Generating {request.track_count} track recommendations...'})}\n\n"
+
+            suggested_tracks = await openai_service.generate_tracks_from_analysis(
+                analysis,
+                request.track_count
+            )
+            yield f"data: {json.dumps({'type': 'pass_complete', 'pass': 'generate', 'message': f'Generated {len(suggested_tracks)} potential tracks'})}\n\n"
+
+            # PASS 3: Validate diversity
+            yield f"data: {json.dumps({'type': 'pass_start', 'pass': 'validate', 'message': 'Validating playlist diversity...'})}\n\n"
+
+            diversity_report = await openai_service.validate_diversity(suggested_tracks, analysis)
+            if diversity_report.is_valid:
+                yield f"data: {json.dumps({'type': 'pass_complete', 'pass': 'validate', 'message': 'Diversity check passed'})}\n\n"
+            else:
+                issue_msg = diversity_report.issues[0] if diversity_report.issues else "diversity issues"
+                yield f"data: {json.dumps({'type': 'pass_progress', 'pass': 'validate', 'message': 'Fixing: ' + issue_msg})}\n\n"
+                # Apply diversity fixes
+                suggested_tracks = await _apply_diversity_fixes(
+                    openai_service, analysis, suggested_tracks, diversity_report, request.track_count
+                )
+                yield f"data: {json.dumps({'type': 'pass_complete', 'pass': 'validate', 'message': 'Diversity issues resolved'})}\n\n"
+
+            # PASS 4: Search Spotify
+            yield f"data: {json.dumps({'type': 'pass_start', 'pass': 'search', 'message': 'Searching Spotify for tracks...'})}\n\n"
+
             spotify_tracks = []
+            seen_ids = set()
             batch_size = 10
-            
+
             for i in range(0, len(suggested_tracks), batch_size):
                 batch = suggested_tracks[i:i + batch_size]
-                batch_tracks = await _batch_search_spotify_tracks_with_progress(spotify_service, batch, i, len(suggested_tracks))
-                
-                # Send progress for each found track
-                for track in batch_tracks:
-                    if track:
-                        spotify_tracks.append(track)
-                        yield f"data: {json.dumps({'type': 'track_found', 'track': {'title': track['title'], 'artist': track['artist'], 'album_art': track.get('album_art')}, 'count': len(spotify_tracks)})}\n\n"
-            
-            yield f"data: {json.dumps({'type': 'status', 'message': f'Found {len(spotify_tracks)} tracks, organizing playlist...'})}\n\n"
-            
-            # Ensure minimum tracks with fallbacks
-            spotify_tracks = await _ensure_minimum_tracks_with_progress(openai_service, spotify_service, request.query, spotify_tracks, 10)
-            
-            # Group tracks into final playlist
-            tracks_with_alternatives = _group_tracks_with_alternatives(spotify_tracks)
-            
-            if len(tracks_with_alternatives) < 10:
-                tracks_with_alternatives = _pad_track_groups(tracks_with_alternatives, spotify_tracks)
-            
+                batch_tasks = [_search_single_track(spotify_service, "", track) for track in batch]
+                batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+
+                for result in batch_results:
+                    if not isinstance(result, Exception) and result:
+                        spotify_id = result.get("spotify_id")
+                        if spotify_id and spotify_id not in seen_ids:
+                            spotify_tracks.append(result)
+                            seen_ids.add(spotify_id)
+                            # Send track found event
+                            yield f"data: {json.dumps({'type': 'track_found', 'track': {'title': result['title'], 'artist': result['artist'], 'album_art': result.get('album_art')}, 'count': len(spotify_tracks)})}\n\n"
+
+                # Early exit if we have enough
+                if len(spotify_tracks) >= request.track_count:
+                    break
+
+            yield f"data: {json.dumps({'type': 'pass_complete', 'pass': 'search', 'message': f'Found {len(spotify_tracks)} tracks on Spotify'})}\n\n"
+
+            # Ensure minimum tracks if needed
+            if len(spotify_tracks) < request.track_count:
+                yield f"data: {json.dumps({'type': 'status', 'message': 'Finding additional tracks...'})}\n\n"
+                spotify_tracks = await _ensure_minimum_tracks(
+                    openai_service, spotify_service, analysis, spotify_tracks, request.track_count
+                )
+
+            # Format tracks for response (flat list, no alternatives)
+            formatted_tracks = _format_spotify_tracks(spotify_tracks[:request.track_count])
+
             # Generate title
             yield f"data: {json.dumps({'type': 'status', 'message': 'Creating playlist title...'})}\n\n"
             playlist_name = await openai_service.generate_playlist_title(request.query)
-            
+
             # Send final result
             result = {
                 'type': 'complete',
                 'playlist': {
                     'playlist_name': playlist_name,
-                    'tracks': tracks_with_alternatives
+                    'tracks': formatted_tracks,
+                    'track_count': len(formatted_tracks)
                 }
             }
             yield f"data: {json.dumps(result)}\n\n"
-            
+
         except Exception as e:
             logger.error(f"Error in streaming playlist generation: {str(e)}")
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-    
+
     return StreamingResponse(
         generate_with_progress(),
         media_type="text/plain",
@@ -406,51 +453,48 @@ async def generate_playlist_stream(request: GeneratePlaylistRequest, db: Session
         }
     )
 
-async def _batch_search_spotify_tracks_with_progress(spotify_service: SpotifyService, suggested_tracks: List[Dict], batch_start: int, total_tracks: int) -> List[Dict]:
-    """
-    Search tracks with progress feedback - faster than original batch function
-    """
-    found_tracks = []
-    batch_tasks = []
-    
-    for track in suggested_tracks:
-        # _search_single_track now handles the search strategy internally  
-        batch_tasks.append(_search_single_track(spotify_service, "", track))
-    
-    # Execute batch concurrently  
-    batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
-    
-    for result in batch_results:
-        if not isinstance(result, Exception) and result:
-            found_tracks.append(result)
-    
-    return found_tracks
 
-async def _ensure_minimum_tracks_with_progress(openai_service, spotify_service, query: str, current_tracks: List[Dict], min_required: int) -> List[Dict]:
+async def _apply_diversity_fixes(
+    openai_service,
+    analysis: QueryAnalysis,
+    tracks: List[Dict],
+    report,
+    target_count: int
+) -> List[Dict]:
     """
-    Ensure minimum tracks with progress updates - simplified for speed
+    Apply diversity fixes by removing problematic tracks and generating replacements.
     """
-    if len(current_tracks) >= min_required:
-        return current_tracks
-    
-    try:
-        needed = min_required - len(current_tracks) + 5  # Generate fewer extra for speed
-        additional_tracks = await openai_service._generate_additional_tracks(query, current_tracks, needed)
-        
-        if additional_tracks:
-            new_spotify_tracks = await _batch_search_spotify_tracks_with_progress(spotify_service, additional_tracks, 0, len(additional_tracks))
-            
-            existing_ids = {track.get("spotify_id") for track in current_tracks}
-            for track in new_spotify_tracks:
-                if track.get("spotify_id") not in existing_ids:
-                    current_tracks.append(track)
-                    existing_ids.add(track.get("spotify_id"))
-                    if len(current_tracks) >= min_required:
-                        break
-    except Exception as e:
-        logger.error(f"Fallback generation failed: {str(e)}")
-    
-    return current_tracks
+    # Remove tracks from over-represented artists
+    artist_count = {}
+    cleaned_tracks = []
+
+    for track in tracks:
+        artist = track.get('artist', '').lower()
+        if artist_count.get(artist, 0) < 2:
+            cleaned_tracks.append(track)
+            artist_count[artist] = artist_count.get(artist, 0) + 1
+
+    # Remove duplicate track names
+    seen_names = set()
+    final_tracks = []
+    for track in cleaned_tracks:
+        name = track.get('track_name', track.get('title', '')).lower()
+        if name not in seen_names:
+            final_tracks.append(track)
+            seen_names.add(name)
+
+    # Generate replacements if needed
+    if len(final_tracks) < target_count:
+        needed = target_count - len(final_tracks) + 5
+        replacements = await openai_service.generate_replacement_tracks(
+            analysis,
+            needed,
+            final_tracks,
+            report.artist_violations
+        )
+        final_tracks.extend(replacements)
+
+    return final_tracks[:target_count + 5]  # Return with small buffer
 
 @router.get("/search-tracks")
 async def search_tracks(q: str, spotify_access_token: str):
