@@ -3,17 +3,24 @@ import httpx
 from typing import List, Dict, Optional
 import logging
 import hashlib
-import time
 from functools import wraps
+from cachetools import TTLCache
+import threading
 
 logger = logging.getLogger(__name__)
 
-# Simple in-memory cache for Spotify API responses
-_spotify_cache = {}
-CACHE_TTL = 300  # 5 minutes
+# Thread-safe TTL cache for Spotify API responses
+# Max 1000 entries, 5 minute TTL (300 seconds)
+_spotify_cache = TTLCache(maxsize=1000, ttl=300)
+_cache_lock = threading.Lock()
 
-def cache_response(ttl=CACHE_TTL):
-    """Decorator to cache Spotify API responses"""
+# Separate cache for longer-lived data (track details) - 1 hour TTL
+_track_details_cache = TTLCache(maxsize=500, ttl=3600)
+_track_cache_lock = threading.Lock()
+
+
+def cache_response(ttl=300, use_track_cache=False):
+    """Decorator to cache Spotify API responses with automatic eviction"""
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -21,21 +28,25 @@ def cache_response(ttl=CACHE_TTL):
             cache_key = hashlib.md5(
                 f"{func.__name__}:{str(args[1:])}:{str(kwargs)}".encode()
             ).hexdigest()
-            
-            # Check if cached response exists and is still valid
-            if cache_key in _spotify_cache:
-                cached_data, timestamp = _spotify_cache[cache_key]
-                if time.time() - timestamp < ttl:
+
+            # Select appropriate cache
+            cache = _track_details_cache if use_track_cache else _spotify_cache
+            lock = _track_cache_lock if use_track_cache else _cache_lock
+
+            # Check if cached response exists (TTLCache handles expiration)
+            with lock:
+                if cache_key in cache:
                     logger.debug(f"Cache hit for {func.__name__}")
-                    return cached_data
-            
+                    return cache[cache_key]
+
             # Call the actual function
             result = await func(*args, **kwargs)
-            
+
             # Cache the result
-            _spotify_cache[cache_key] = (result, time.time())
+            with lock:
+                cache[cache_key] = result
             logger.debug(f"Cached result for {func.__name__}")
-            
+
             return result
         return wrapper
     return decorator
@@ -49,7 +60,7 @@ class SpotifyService:
             "Content-Type": "application/json"
         }
     
-    @cache_response(ttl=600)  # Cache search results for 10 minutes
+    @cache_response(ttl=300)  # Cache search results for 5 minutes
     async def search_track(self, query: str, limit: int = 5) -> List[Dict]:
         """
         Search for tracks on Spotify using async HTTP
@@ -160,7 +171,7 @@ class SpotifyService:
             logger.error(f"Failed to add tracks to playlist: {str(e)}")
             raise Exception(f"Failed to add tracks to playlist: {str(e)}")
     
-    @cache_response(ttl=3600)  # Cache track details for 1 hour
+    @cache_response(ttl=3600, use_track_cache=True)  # Cache track details for 1 hour
     async def get_tracks_details(self, track_ids: List[str]) -> List[Dict]:
         """
         Get detailed information for multiple tracks by their IDs

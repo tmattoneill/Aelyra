@@ -23,6 +23,9 @@ pydantic_core==2.16.3
 # Environment and configuration
 python-dotenv==1.0.1
 
+# Caching
+cachetools==5.3.3
+
 # Development and code quality
 ruff==0.3.5
 

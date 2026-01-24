@@ -1,10 +1,11 @@
 
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List, Dict, AsyncGenerator
 import logging
 import json
+import httpx
 
 from app.models.requests import GeneratePlaylistRequest, SearchTracksRequest, CreatePlaylistRequest, UpdateProfileRequest, UploadPlaylistRequest
 from app.models.responses import GeneratePlaylistResponse, ErrorResponse
@@ -493,11 +494,13 @@ async def get_user_info(spotify_access_token: str, db: Session = Depends(get_db)
             })
         
         return response_data
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error getting user info: {e.response.status_code}")
+        if e.response.status_code in (401, 403):
+            raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         logger.error(f"Error getting user info: {str(e)}")
-        # Check if it's a token-related error
-        if "401" in str(e) or "403" in str(e) or "Bad Request" in str(e):
-            raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/create-playlist")
@@ -550,11 +553,13 @@ async def create_playlist(request: CreatePlaylistRequest, db: Session = Depends(
             "message": "Playlist created successfully"
         }
         
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error creating playlist: {e.response.status_code}")
+        if e.response.status_code in (401, 403):
+            raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         logger.error(f"Error creating playlist: {str(e)}")
-        # Check if it's a token-related error
-        if "401" in str(e) or "403" in str(e) or "Bad Request" in str(e):
-            raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.put("/user-profile")
@@ -588,10 +593,13 @@ async def update_user_profile(request: UpdateProfileRequest, db: Session = Depen
             "location": updated_user.location
         }
         
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error updating user profile: {e.response.status_code}")
+        if e.response.status_code in (401, 403):
+            raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         logger.error(f"Error updating user profile: {str(e)}")
-        if "401" in str(e) or "403" in str(e):
-            raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/user-playlists")
@@ -610,24 +618,39 @@ async def get_user_playlists(spotify_access_token: str, limit: int = 20, offset:
             return {"playlists": []}
         
         playlist_history_service = PlaylistHistoryService(db)
-        playlists = playlist_history_service.get_user_playlists(user.id, limit, offset)
-        
+        # Use eager loading to prevent N+1 queries
+        playlists = playlist_history_service.get_user_playlists(user.id, limit, offset, include_tracks=True)
+
+        # Collect all track IDs for batch fetching album art
+        all_track_ids = []
+        playlist_track_map = {}  # Map playlist_hash -> list of track_ids for album art
+
+        for playlist in playlists:
+            # Access eagerly loaded tracks
+            tracks = playlist.tracks[:4] if playlist.tracks else []
+            track_ids = [track.spotify_track_id for track in tracks]
+            all_track_ids.extend(track_ids)
+            playlist_track_map[playlist.playlist_hash] = track_ids
+
+        # Batch fetch album art for all playlists in one call (up to 50 tracks)
+        album_art_cache = {}
+        if all_track_ids:
+            try:
+                # Fetch up to 50 tracks at once
+                unique_track_ids = list(set(all_track_ids))[:50]
+                track_details = await spotify_service.get_tracks_details(unique_track_ids)
+                for track in track_details:
+                    if track and track.get('spotify_id') and track.get('album_art'):
+                        album_art_cache[track['spotify_id']] = track['album_art']
+            except Exception as e:
+                logger.warning(f"Failed to batch fetch album art: {e}")
+
         playlist_data = []
         for playlist in playlists:
-            tracks = playlist_history_service.get_playlist_tracks(playlist.id)
-            
-            # Get album art for the first 4 tracks for UI display
-            album_art_urls = []
-            if tracks:
-                first_four_track_ids = [track.spotify_track_id for track in tracks[:4]]
-                try:
-                    # Add small delay to avoid overwhelming Spotify API
-                    await asyncio.sleep(0.03)  # 30ms delay
-                    track_details = await spotify_service.get_tracks_details(first_four_track_ids)
-                    album_art_urls = [track.get('album_art') for track in track_details if track.get('album_art')]
-                except Exception as e:
-                    logger.warning(f"Failed to get album art for playlist {playlist.playlist_hash}: {e}")
-            
+            # Get album art from cache
+            track_ids = playlist_track_map.get(playlist.playlist_hash, [])
+            album_art_urls = [album_art_cache.get(tid) for tid in track_ids if album_art_cache.get(tid)]
+
             playlist_data.append({
                 "id": playlist.playlist_hash,
                 "name": playlist.playlist_name,
@@ -644,16 +667,19 @@ async def get_user_playlists(spotify_access_token: str, limit: int = 20, offset:
                         "album": track.album_name,
                         "spotify_id": track.spotify_track_id
                     }
-                    for track in tracks
+                    for track in sorted(playlist.tracks, key=lambda t: t.position)
                 ]
             })
         
         return {"playlists": playlist_data}
         
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error getting user playlists: {e.response.status_code}")
+        if e.response.status_code in (401, 403):
+            raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         logger.error(f"Error getting user playlists: {str(e)}")
-        if "401" in str(e) or "403" in str(e):
-            raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/upload-playlist")
@@ -783,9 +809,11 @@ async def upload_playlist(request: UploadPlaylistRequest, db: Session = Depends(
 
     except HTTPException:
         raise
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error uploading playlist: {e.response.status_code}")
+        if e.response.status_code in (401, 403):
+            raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         logger.error(f"Error uploading playlist: {str(e)}")
-        # Check if it's a token-related error
-        if "401" in str(e) or "403" in str(e) or "Bad Request" in str(e):
-            raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
         raise HTTPException(status_code=500, detail=str(e))

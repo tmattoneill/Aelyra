@@ -7,15 +7,42 @@ import urllib.parse
 import httpx
 import secrets
 import base64
+from datetime import datetime, timedelta
+import logging
 
 from app.models.responses import AuthResponse, CallbackResponse
 from app.database import get_db
 from app.services.user_service import UserService
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
-# In-memory storage for state (use Redis in production)
+# In-memory storage for state with TTL (use Redis in production)
+# Structure: {state: {"created": datetime, "valid": bool}}
 oauth_states = {}
+STATE_TTL = timedelta(minutes=5)
+MAX_STATES = 1000  # Maximum states to store before forced cleanup
+
+
+def cleanup_expired_states():
+    """Remove expired OAuth states to prevent memory leaks"""
+    now = datetime.utcnow()
+    expired = [k for k, v in oauth_states.items()
+               if now - v.get("created", now) > STATE_TTL]
+    for k in expired:
+        del oauth_states[k]
+    if expired:
+        logger.debug(f"Cleaned up {len(expired)} expired OAuth states")
+
+    # Force cleanup if too many states (potential attack or leak)
+    if len(oauth_states) > MAX_STATES:
+        # Remove oldest half of states
+        sorted_states = sorted(oauth_states.items(),
+                               key=lambda x: x[1].get("created", datetime.min))
+        to_remove = sorted_states[:len(sorted_states) // 2]
+        for k, _ in to_remove:
+            del oauth_states[k]
+        logger.warning(f"Force cleaned {len(to_remove)} OAuth states (exceeded max)")
 
 async def get_spotify_user_profile(access_token: str) -> dict:
     """Fetch user profile from Spotify API"""
@@ -26,9 +53,9 @@ async def get_spotify_user_profile(access_token: str) -> dict:
         return response.json()
 
 @router.get("", response_model=AuthResponse)
-async def spotofy_auth_no_slash():
+async def spotify_auth_no_slash():
     """
-    Initiate Spotify OAuth flow No Slash
+    Initiate Spotify OAuth flow (no trailing slash)
     """
     return await spotify_auth()
 
@@ -48,7 +75,12 @@ async def spotify_auth():
     
     # Generate random state for security
     state = secrets.token_urlsafe(32)
-    oauth_states[state] = True
+
+    # Clean up expired states before adding new one
+    cleanup_expired_states()
+
+    # Store state with creation time for TTL tracking
+    oauth_states[state] = {"created": datetime.utcnow(), "valid": True}
     
     # Spotify OAuth scopes needed for playlist creation
     scopes = [
@@ -78,11 +110,20 @@ async def spotify_callback(code: str = None, state: str = None, error: str = Non
     if not code or not state:
         raise HTTPException(status_code=400, detail="Missing authorization code or state")
     
-    # Verify state
-    if state not in oauth_states:
+    # Clean up expired states before verification
+    cleanup_expired_states()
+
+    # Verify state exists and is valid
+    state_data = oauth_states.get(state)
+    if not state_data or not state_data.get("valid"):
         raise HTTPException(status_code=400, detail="Invalid state parameter")
-    
-    del oauth_states[state]  # Clean up
+
+    # Check if state has expired
+    if datetime.utcnow() - state_data.get("created", datetime.min) > STATE_TTL:
+        del oauth_states[state]
+        raise HTTPException(status_code=400, detail="State parameter has expired")
+
+    del oauth_states[state]  # Clean up used state
     
     # Exchange code for access token
     client_id = os.getenv("SPOTIFY_CLIENT_ID")

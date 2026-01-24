@@ -17,50 +17,65 @@ function App() {
 
   // Load token from sessionStorage on app start
   useEffect(() => {
+    let mounted = true;
+    const controller = new AbortController();
+
     const loadSavedToken = async () => {
       try {
         const savedToken = sessionStorage.getItem('spotify_token');
         const savedUser = sessionStorage.getItem('user_info');
-        
+
         if (savedToken && savedUser) {
-          console.log('Found saved token, validating...');
-          
           // Validate token by testing it with user-info endpoint
           try {
-            const response = await api.get('/api/user-info', {
-              params: { spotify_access_token: savedToken }
+            await api.get('/api/user-info', {
+              params: { spotify_access_token: savedToken },
+              signal: controller.signal
             });
-            
-            // Token is valid, restore session
-            setSpotifyToken(savedToken);
-            setUserInfo(JSON.parse(savedUser));
-            setStep(2);
-            console.log('Token validated successfully, session restored');
+
+            // Only update state if component is still mounted
+            if (mounted) {
+              setSpotifyToken(savedToken);
+              setUserInfo(JSON.parse(savedUser));
+              setStep(2);
+            }
           } catch (error) {
-            console.log('Saved token is invalid or expired, clearing...');
-            sessionStorage.removeItem('spotify_token');
-            sessionStorage.removeItem('user_info');
+            // Don't clear storage if request was aborted
+            if (error.name !== 'AbortError' && mounted) {
+              sessionStorage.removeItem('spotify_token');
+              sessionStorage.removeItem('user_info');
+            }
           }
         }
       } catch (error) {
-        console.error('Error loading saved token:', error);
+        // Only log if not an abort error
+        if (error.name !== 'AbortError') {
+          console.error('Error loading saved token:', error);
+        }
       } finally {
-        setTokenLoading(false);
+        if (mounted) {
+          setTokenLoading(false);
+        }
       }
     };
 
     loadSavedToken();
+
+    // Cleanup function
+    return () => {
+      mounted = false;
+      controller.abort();
+    };
   }, []);
 
   const handleAuthSuccess = (token, user) => {
     setSpotifyToken(token);
     setUserInfo(user);
     setStep(2);
-    
+
     // Save to sessionStorage for persistence
     sessionStorage.setItem('spotify_token', token);
     sessionStorage.setItem('user_info', JSON.stringify(user));
-    console.log('Token saved to session storage');
   };
 
   const handleLogout = () => {
@@ -68,11 +83,10 @@ function App() {
     setUserInfo(null);
     setStep(1);
     setActiveTab('generate');
-    
+
     // Clear sessionStorage
     sessionStorage.removeItem('spotify_token');
     sessionStorage.removeItem('user_info');
-    console.log('Token cleared from session storage');
   };
 
   const handleTokenExpired = () => {
@@ -80,11 +94,10 @@ function App() {
     setUserInfo(null);
     setStep(1);
     setActiveTab('generate');
-    
+
     // Clear sessionStorage when token expires
     sessionStorage.removeItem('spotify_token');
     sessionStorage.removeItem('user_info');
-    console.log('Expired token cleared from session storage');
   };
 
   const handleProfileUpdate = (updatedProfile) => {

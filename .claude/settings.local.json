@@ -5,7 +5,8 @@
       "Bash(grep:*)",
       "Bash(pkill:*)",
       "Bash(python:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(ls:*)"
     ],
     "deny": []
   }

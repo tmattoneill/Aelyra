@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { api } from '../config';
 import SkeletonLoader from './SkeletonLoader';
 
@@ -14,15 +14,35 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
   const [showRawResponse, setShowRawResponse] = useState(false);
   const [success, setSuccess] = useState('');
   const [step, setStep] = useState('input'); // 'input', 'generated', 'created'
-  
+
   // New state for streaming progress
   const [progressStatus, setProgressStatus] = useState('');
   const [foundTracks, setFoundTracks] = useState([]);
   const [trackCount, setTrackCount] = useState(0);
-  
+
+  // Refs for cleanup (prevent memory leaks)
+  const phraseIntervalRef = useRef(null);
+  const abortControllerRef = useRef(null);
+
   // Cycling search phrases
   const MESSAGE_CYCLE_SPEED = 4000; // milliseconds between phrase changes (4 seconds)
   const [currentSearchPhrase, setCurrentSearchPhrase] = useState('');
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      // Clear any running interval
+      if (phraseIntervalRef.current) {
+        clearInterval(phraseIntervalRef.current);
+        phraseIntervalRef.current = null;
+      }
+      // Abort any in-flight request
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+    };
+  }, []);
   const searchPhrases = [
     "Digging through vinyl crates",
     "Matching beats per minute",
@@ -49,10 +69,20 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
   };
 
   const generatePlaylist = async () => {
-    console.log('Starting playlist generation with token:', !!spotifyToken);
     if (!query.trim()) {
       setError('Please enter a description for your playlist');
       return;
+    }
+
+    // Abort any existing request before starting a new one
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
+    // Clear any existing interval
+    if (phraseIntervalRef.current) {
+      clearInterval(phraseIntervalRef.current);
     }
 
     setLoading(true);
@@ -61,12 +91,12 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
     setProgressStatus('');
     setFoundTracks([]);
     setTrackCount(0);
-    
+
     // Start cycling through search phrases
     let phraseIndex = 0;
     setCurrentSearchPhrase(searchPhrases[phraseIndex]);
-    
-    const phraseInterval = setInterval(() => {
+
+    phraseIntervalRef.current = setInterval(() => {
       phraseIndex = (phraseIndex + 1) % searchPhrases.length;
       setCurrentSearchPhrase(searchPhrases[phraseIndex]);
     }, MESSAGE_CYCLE_SPEED);
@@ -81,7 +111,8 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
         body: JSON.stringify({
           query: query.trim(),
           spotify_access_token: spotifyToken
-        })
+        }),
+        signal: abortControllerRef.current.signal
       });
 
       if (!response.ok) {
@@ -115,7 +146,11 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
                 setSelectedTracks(new Set(data.playlist.tracks.map(track => track.spotify_id)));
                 setStep('generated');
                 setLoading(false);
-                clearInterval(phraseInterval); // Stop cycling phrases
+                // Stop cycling phrases
+                if (phraseIntervalRef.current) {
+                  clearInterval(phraseIntervalRef.current);
+                  phraseIntervalRef.current = null;
+                }
                 return;
               } else if (data.type === 'error') {
                 throw new Error(data.message);
@@ -127,8 +162,13 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
         }
       }
     } catch (err) {
+      // Don't show error if request was aborted (component unmounted or new request started)
+      if (err.name === 'AbortError') {
+        return;
+      }
+
       console.error('Streaming error, falling back to regular endpoint:', err);
-      
+
       // Fallback to original endpoint
       try {
         const response = await api.post('/api/generate-playlist', {
@@ -142,7 +182,7 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
         setStep('generated');
       } catch (fallbackErr) {
         const errorDetail = fallbackErr.response?.data?.detail || 'Failed to generate playlist';
-        
+
         // Check if this is an AI parsing error with raw response
         if (errorDetail.includes('Failed to parse AI response|RAW_RESPONSE:')) {
           const [errorMsg, rawResponse] = errorDetail.split('|RAW_RESPONSE:');
@@ -159,7 +199,7 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
           } else if (errorDetail.includes('Failed to search Spotify')) {
             userFriendlyError = 'Unable to search Spotify for tracks. Please check your connection and try again.';
           }
-          
+
           setError(userFriendlyError);
           setRawAiResponse('');
         }
@@ -167,7 +207,11 @@ const PlaylistGenerator = ({ spotifyToken, userInfo, onLogout, onTokenExpired })
       }
     } finally {
       setLoading(false);
-      clearInterval(phraseInterval); // Stop cycling phrases
+      // Stop cycling phrases
+      if (phraseIntervalRef.current) {
+        clearInterval(phraseIntervalRef.current);
+        phraseIntervalRef.current = null;
+      }
     }
   };
 

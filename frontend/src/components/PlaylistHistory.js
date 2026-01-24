@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { api } from '../config';
 
 const PlaylistHistory = ({ spotifyToken, userInfo }) => {
@@ -6,13 +6,12 @@ const PlaylistHistory = ({ spotifyToken, userInfo }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    fetchPlaylists();
-  }, [spotifyToken]);
+  const fetchPlaylists = useCallback(async (signal) => {
+    if (!spotifyToken) {
+      setLoading(false);
+      return;
+    }
 
-  const fetchPlaylists = async () => {
-    if (!spotifyToken) return;
-    
     setLoading(true);
     setError('');
 
@@ -21,17 +20,31 @@ const PlaylistHistory = ({ spotifyToken, userInfo }) => {
         params: {
           spotify_access_token: spotifyToken,
           limit: 50
-        }
+        },
+        signal
       });
-      
+
       setPlaylists(response.data.playlists || []);
-    } catch (error) {
-      console.error('Error fetching playlists:', error);
+    } catch (err) {
+      // Don't update state if request was cancelled
+      if (err.name === 'AbortError' || err.name === 'CanceledError') {
+        return;
+      }
       setError('Failed to load playlist history');
     } finally {
       setLoading(false);
     }
-  };
+  }, [spotifyToken]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    fetchPlaylists(controller.signal);
+
+    return () => {
+      controller.abort();
+    };
+  }, [fetchPlaylists]);
 
   const formatDuration = (trackCount) => {
     // Estimate duration (average 3.5 minutes per track)
