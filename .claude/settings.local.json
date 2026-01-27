@@ -9,7 +9,8 @@
       "Bash(ls:*)",
       "Bash(python3:*)",
       "Bash(node --check:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(ssh:*)"
     ],
     "deny": []
   }
