@@ -43,10 +43,8 @@ case "$REMOTE_PATH" in
         exit 1 ;;
 esac
 
-if [ ! -f .env.prod ]; then
-    echo "❌ .env.prod not found — the remote needs it to boot." >&2
-    exit 1
-fi
+# No local env check: the server's own .env is the live configuration and is
+# never shipped (every .env* is excluded below), so a local copy proves nothing.
 
 echo "🚀 Deploying Aelyra to ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}"
 echo ""

@@ -13,17 +13,26 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-if [ ! -f .env.prod ]; then
-    echo "❌ .env.prod not found." >&2
+# Prefer .env, which is what the systemd unit loads. A separate .env.prod was
+# a trap: the copy on the server had drifted a year out of date and held a
+# revoked API key, so launching this way booted a broken app.
+ENV_FILE=""
+for candidate in .env .env.prod; do
+    if [ -f "$candidate" ]; then ENV_FILE="$candidate"; break; fi
+done
+
+if [ -z "$ENV_FILE" ]; then
+    echo "❌ No .env (or .env.prod) found." >&2
     exit 1
 fi
+echo "🔑 Config from $ENV_FILE"
 
 # `set -a` exports everything sourced, and sourcing handles quoting and spaces
 # correctly. The previous `export $(cat .env.prod | xargs)` split values on
 # whitespace and exposed every secret in the process table.
 set -a
 # shellcheck disable=SC1091
-source .env.prod
+source "$ENV_FILE"
 set +a
 
 # The deploy creates .venv on the remote; local development uses venv.
