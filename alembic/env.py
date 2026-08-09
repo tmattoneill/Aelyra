@@ -1,7 +1,8 @@
+import os
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
+from dotenv import load_dotenv
+from sqlalchemy import engine_from_config, pool
 
 from alembic import context
 
@@ -14,11 +15,24 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+# Take the database URL from the environment, exactly as the application does
+# (app/database.py). Trusting alembic.ini instead meant migrations silently ran
+# against the local SQLite file whenever DATABASE_URL pointed elsewhere.
+load_dotenv()
+config.set_main_option(
+    "sqlalchemy.url",
+    os.getenv("DATABASE_URL", "sqlite:///./aelyra.db"),
+)
+
 # add your model's MetaData object here
-# for 'autogenerate' support
+# for 'autogenerate' support.
+# The model imports look unused but are not: importing them is what registers
+# the tables on Base.metadata, without which autogenerate sees an empty schema
+# and writes a migration that drops everything.
 from app.database import Base
-from app.models.user import User  # Import models to ensure they're registered
-from app.models.playlist_history import PlaylistHistory, PlaylistTrack  # Import playlist models
+from app.models.playlist_history import PlaylistHistory, PlaylistTrack  # noqa: F401
+from app.models.user import User  # noqa: F401
+
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
@@ -66,7 +80,11 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
+            # SQLite cannot ALTER a column, so any change beyond adding one
+            # needs Alembic's copy-and-rename batch mode to work at all.
+            render_as_batch=True,
         )
 
         with context.begin_transaction():

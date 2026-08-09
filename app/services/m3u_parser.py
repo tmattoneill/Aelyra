@@ -1,7 +1,6 @@
-import re
 import logging
-from typing import List, Dict, Tuple
-from urllib.parse import urlparse
+import re
+from typing import Dict, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -10,9 +9,10 @@ class M3UParser:
     Parser for M3U playlist files, specifically for Spotify track URLs
     """
 
-    # Regex patterns for Spotify URLs
-    SPOTIFY_TRACK_URL_PATTERN = r'https?://open\.spotify\.com/track/([a-zA-Z0-9]+)'
-    SPOTIFY_TRACK_URI_PATTERN = r'spotify:track:([a-zA-Z0-9]+)'
+    # Spotify track ids are always 22 base62 characters. Bounding the match
+    # keeps arbitrary-length input out of the ids we send to the Spotify API.
+    SPOTIFY_TRACK_URL_PATTERN = r'https?://open\.spotify\.com/track/([a-zA-Z0-9]{22})'
+    SPOTIFY_TRACK_URI_PATTERN = r'spotify:track:([a-zA-Z0-9]{22})'
 
     # Maximum number of tracks to prevent abuse
     MAX_TRACKS = 500
@@ -145,8 +145,9 @@ class M3UParser:
 
         lines = content.strip().split('\n')
 
-        # Check if it looks like an M3U file
-        has_m3u_header = lines[0].strip().upper() == '#EXTM3U'
+        # A file only needs to contain Spotify track links to be usable; the
+        # #EXTM3U header is optional in plain M3U, so its absence is not an
+        # error on its own.
         has_spotify_urls = any(
             'spotify.com/track' in line or 'spotify:track:' in line
             for line in lines

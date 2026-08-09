@@ -1,155 +1,158 @@
-
-from fastapi import APIRouter, HTTPException, Depends
-from fastapi.responses import JSONResponse, StreamingResponse
-from sqlalchemy.orm import Session, joinedload
-from typing import List, Dict, AsyncGenerator
-import logging
-import json
-import httpx
-
-from app.models.requests import GeneratePlaylistRequest, SearchTracksRequest, CreatePlaylistRequest, UpdateProfileRequest, UploadPlaylistRequest
-from app.models.responses import GeneratePlaylistResponse, ErrorResponse
-from app.services.spotify_service import SpotifyService
-from app.services.openai_service import OpenAIService, QueryAnalysis
-from app.database import get_db
-from app.services.user_service import UserService
-from app.services.playlist_history_service import PlaylistHistoryService
-from app.services.m3u_parser import M3UParser
 import asyncio
+import json
+import logging
+from typing import AsyncGenerator, Dict, List
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.dependencies import spotify_token
+from app.models.requests import (
+    CreatePlaylistRequest,
+    GeneratePlaylistRequest,
+    UpdateProfileRequest,
+    UploadPlaylistRequest,
+)
+from app.models.responses import GeneratePlaylistResponse
+from app.services.m3u_parser import M3UParser
+from app.services.openai_service import OpenAIService, QueryAnalysis
+from app.services.playlist_history_service import PlaylistHistoryService
+from app.services.spotify_service import SpotifyService
+from app.services.user_service import UNSET, UserService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# One extra round of suggestions when Spotify cannot find enough of the first
+# batch. Bounded so a pathological query cannot loop up the API bill.
+MAX_REFILL_ROUNDS = 1
+
+
+def _server_error(context: str, exc: Exception) -> HTTPException:
+    """Log the real error, return one that reveals nothing about internals.
+
+    Endpoints used to put str(exc) in the response detail, which handed
+    unauthenticated callers raw OpenAI and Spotify error bodies.
+    """
+    logger.exception(f"{context}: {exc}")
+    return HTTPException(status_code=500, detail=context)
+
+
+def _spotify_http_error(context: str, exc: httpx.HTTPStatusError) -> HTTPException:
+    if exc.response.status_code in (401, 403):
+        return HTTPException(status_code=401, detail="Spotify token expired or invalid")
+    if exc.response.status_code == 429:
+        return HTTPException(status_code=429, detail="Spotify rate limit reached, please retry shortly")
+    logger.error(f"{context}: Spotify returned {exc.response.status_code}")
+    return HTTPException(status_code=502, detail=context)
 
 
 # ==========================================================================
 # SPOTIFY TRACK SEARCH HELPERS
 # ==========================================================================
 
-async def _batch_search_spotify_tracks(
-    spotify_service: SpotifyService,
-    suggested_tracks: List[Dict],
-    target_count: int = None
-) -> List[Dict]:
-    """
-    Search all suggested tracks on Spotify in batches for better performance.
-
-    Args:
-        spotify_service: Spotify service instance
-        suggested_tracks: List of track suggestions from OpenAI
-        target_count: Optional target number of tracks (for early exit optimization)
-
-    Returns:
-        List of found Spotify tracks
-    """
-    found_tracks = []
-    seen_track_ids = set()  # Track duplicate Spotify IDs
-    batch_size = 15  # Increased batch size for better performance
-
-    for i in range(0, len(suggested_tracks), batch_size):
-        batch = suggested_tracks[i:i + batch_size]
-        batch_tasks = []
-
-        for track in batch:
-            batch_tasks.append(_search_single_track(spotify_service, "", track))
-
-        # Execute batch of searches concurrently
-        batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
-
-        # Process results and filter out exceptions and duplicates
-        for result in batch_results:
-            if not isinstance(result, Exception) and result:
-                spotify_id = result.get("spotify_id")
-                if spotify_id and spotify_id not in seen_track_ids:
-                    found_tracks.append(result)
-                    seen_track_ids.add(spotify_id)
-                elif spotify_id in seen_track_ids:
-                    logger.debug(f"Skipping duplicate track: {result.get('title')} by {result.get('artist')}")
-
-        # Early exit if we have enough tracks
-        if target_count and len(found_tracks) >= target_count:
-            logger.info(f"Early exit: found {len(found_tracks)} unique tracks, stopping search")
-            break
-
-        # Reduced delay for better performance
-        if i + batch_size < len(suggested_tracks):
-            await asyncio.sleep(0.05)
-
-    tracks_searched = min(len(suggested_tracks), i + batch_size) if suggested_tracks else 0
-    logger.info(f"Batch search: {len(found_tracks)} unique tracks found from {tracks_searched} searched")
-    return found_tracks
-
-async def _search_single_track(spotify_service: SpotifyService, search_query: str, original_track: Dict) -> Dict:
-    """
-    Search for a single track on Spotify with improved multi-step strategy
-    """
+async def _search_single_track(spotify_service: SpotifyService, original_track: Dict) -> Dict | None:
+    """Find one AI-suggested track on Spotify, trying progressively looser queries."""
     track_name = original_track.get('track_name', original_track.get('title', ''))
     artist = original_track.get('artist', '')
     album = original_track.get('album', '')
-    
+
     try:
-        # Strategy 1: Search with just track name + artist (more likely to succeed)
-        basic_query = f"{track_name} {artist}".strip()
-        search_results = await spotify_service.search_track(basic_query, limit=10)
-        
+        # Track name plus artist resolves the overwhelming majority of cases.
+        search_results = await spotify_service.search_track(f"{track_name} {artist}".strip(), limit=10)
+
         if search_results:
-            # If we have album info, try to find the best match
             if album and album != "Unknown Album":
-                # Look for exact album match first
                 for result in search_results:
                     result_album = result.get('album', '')
                     if result_album and album.lower() in result_album.lower():
                         return result
-                
-                # Look for partial album matches (common words, ignoring "soundtrack", "greatest hits", etc.)
+
+                # No exact album hit: score candidates on shared album words,
+                # ignoring words that carry no identifying information.
                 album_words = set(album.lower().split())
-                best_match = None
-                best_score = 0
-                
+                noise = {'the', 'a', 'an', 'and', 'or', 'of', 'in', 'on', 'at', 'to',
+                         'for', 'soundtrack', 'greatest', 'hits', 'best', 'collection'}
+                best_match, best_score = None, 0
                 for result in search_results:
                     result_album = result.get('album', '')
-                    if result_album:
-                        result_words = set(result_album.lower().split())
-                        common_words = album_words.intersection(result_words)
-                        # Filter out common non-descriptive words
-                        meaningful_words = common_words - {'the', 'a', 'an', 'and', 'or', 'of', 'in', 'on', 'at', 'to', 'for', 'soundtrack', 'greatest', 'hits', 'best', 'collection'}
-                        
-                        if len(meaningful_words) > best_score:
-                            best_score = len(meaningful_words)
-                            best_match = result
-                
-                # Return best match or first result if no good album match
-                return best_match if best_match else search_results[0]
-            else:
-                # No album info, return first result
-                return search_results[0]
-        
-        # Strategy 2: Try with quotes around track name
+                    if not result_album:
+                        continue
+                    shared = (album_words & set(result_album.lower().split())) - noise
+                    if len(shared) > best_score:
+                        best_score, best_match = len(shared), result
+                return best_match or search_results[0]
+            return search_results[0]
+
+        # Quoting the title stops Spotify splitting it into loose keywords.
         if '"' not in track_name:
-            quoted_query = f'"{track_name}" {artist}'
-            search_results = await spotify_service.search_track(quoted_query, limit=5)
+            search_results = await spotify_service.search_track(f'"{track_name}" {artist}', limit=5)
             if search_results:
                 return search_results[0]
-        
-        # Strategy 3: Try just the track name (very broad)
+
         if track_name:
-            track_only_query = f'"{track_name}"'
-            search_results = await spotify_service.search_track(track_only_query, limit=5)
+            search_results = await spotify_service.search_track(f'"{track_name}"', limit=5)
             if search_results:
                 return search_results[0]
-        
-        # If all strategies fail
-        logger.warning(f"No Spotify results for track: {track_name} by {artist}")
-        return None
-        
-    except Exception as e:
-        logger.warning(f"Spotify search failed for '{track_name}' by '{artist}': {str(e)}")
+
+        logger.info(f"No Spotify match for: {track_name} by {artist}")
         return None
 
+    except Exception as e:
+        logger.warning(f"Spotify search failed for '{track_name}' by '{artist}': {e}")
+        return None
+
+
+async def _batch_search_spotify_tracks(
+    spotify_service: SpotifyService,
+    suggested_tracks: List[Dict],
+    target_count: int = None,
+    seen_track_ids: set = None,
+) -> tuple[List[Dict], List[Dict]]:
+    """Search suggestions on Spotify concurrently, in batches.
+
+    Returns (found tracks, suggestions with no Spotify match). The misses feed
+    back into the model so it can suggest different tracks.
+    """
+    found_tracks: List[Dict] = []
+    unmatched: List[Dict] = []
+    seen_track_ids = seen_track_ids if seen_track_ids is not None else set()
+    batch_size = 15
+
+    for i in range(0, len(suggested_tracks), batch_size):
+        batch = suggested_tracks[i:i + batch_size]
+        results = await asyncio.gather(
+            *(_search_single_track(spotify_service, track) for track in batch),
+            return_exceptions=True,
+        )
+
+        for suggestion, result in zip(batch, results):
+            if isinstance(result, Exception) or not result:
+                unmatched.append(suggestion)
+                continue
+            spotify_id = result.get("spotify_id")
+            if spotify_id and spotify_id not in seen_track_ids:
+                found_tracks.append(result)
+                seen_track_ids.add(spotify_id)
+            else:
+                logger.debug(f"Duplicate Spotify result: {result.get('title')}")
+
+        if target_count and len(found_tracks) >= target_count:
+            logger.info(f"Found {len(found_tracks)} tracks, ending search early")
+            break
+
+        if i + batch_size < len(suggested_tracks):
+            await asyncio.sleep(0.05)
+
+    logger.info(f"Spotify search: {len(found_tracks)} found, {len(unmatched)} unmatched")
+    return found_tracks, unmatched
+
+
 def _format_spotify_tracks(spotify_tracks: List[Dict]) -> List[Dict]:
-    """
-    Format Spotify tracks for the response.
-    Ensures consistent format and removes duplicates.
-    """
+    """Shape tracks for the API response, dropping any repeated Spotify id."""
     formatted_tracks = []
     seen_ids = set()
 
@@ -162,538 +165,474 @@ def _format_spotify_tracks(spotify_tracks: List[Dict]) -> List[Dict]:
                 "album": track.get("album", "Unknown Album"),
                 "spotify_id": spotify_id,
                 "album_art": track.get("album_art"),
-                "preview_url": track.get("preview_url")
+                "preview_url": track.get("preview_url"),
             })
             seen_ids.add(spotify_id)
 
     return formatted_tracks
 
-async def _ensure_minimum_tracks(
-    openai_service,
-    spotify_service,
+
+async def _refill_tracks(
+    openai_service: OpenAIService,
+    spotify_service: SpotifyService,
     analysis: QueryAnalysis,
-    current_tracks: List[Dict],
-    min_required: int
+    found_tracks: List[Dict],
+    unmatched: List[Dict],
+    target_count: int,
 ) -> List[Dict]:
+    """Ask the model for replacements for suggestions Spotify could not find.
+
+    The previous behaviour padded short playlists with results for "popular
+    songs" and "top hits", which silently handed back tracks unrelated to what
+    was asked for. Coming up short and saying so is more honest, so this makes
+    one focused retry and then reports whatever it has.
     """
-    Ensure we have at least the minimum required tracks, generating more if needed.
-    Uses the QueryAnalysis for better targeted generation.
-    """
-    if len(current_tracks) >= min_required:
-        return current_tracks
+    tracks = list(found_tracks)
+    seen_ids = {t.get("spotify_id") for t in tracks if t.get("spotify_id")}
 
-    logger.info(f"Need {min_required - len(current_tracks)} more tracks, generating fallback...")
+    for round_number in range(MAX_REFILL_ROUNDS):
+        if len(tracks) >= target_count:
+            break
 
-    try:
-        # Generate additional tracks using the analysis
-        needed = min_required - len(current_tracks) + 5
+        needed = target_count - len(tracks)
+        logger.info(f"Refill round {round_number + 1}: need {needed} more tracks")
 
-        # Convert current tracks to format expected by OpenAI service
-        existing_ai_tracks = [
-            {"track_name": t.get("title"), "artist": t.get("artist")}
-            for t in current_tracks
-        ]
-
-        additional_tracks = await openai_service.generate_tracks_from_analysis(
-            analysis,
-            needed,
-            existing_ai_tracks
-        )
-
-        if additional_tracks:
-            # Search new tracks on Spotify
-            new_spotify_tracks = await _batch_search_spotify_tracks(
-                spotify_service,
-                additional_tracks,
-                target_count=needed
+        try:
+            existing_as_suggestions = [
+                {"track_name": t.get("title"), "artist": t.get("artist")} for t in tracks
+            ]
+            replacements = await openai_service.generate_tracks_from_analysis(
+                analysis,
+                needed,
+                existing_tracks=existing_as_suggestions,
+                unavailable_tracks=unmatched,
             )
+            if not replacements:
+                break
 
-            # Add them to our collection (avoid duplicates)
-            existing_ids = {track.get("spotify_id") for track in current_tracks if track.get("spotify_id")}
-            for track in new_spotify_tracks:
-                spotify_id = track.get("spotify_id")
-                if spotify_id and spotify_id not in existing_ids:
-                    current_tracks.append(track)
-                    existing_ids.add(spotify_id)
+            new_tracks, new_unmatched = await _batch_search_spotify_tracks(
+                spotify_service, replacements, target_count=needed, seen_track_ids=seen_ids
+            )
+            if not new_tracks:
+                break
 
-                    # Early exit when we have enough
-                    if len(current_tracks) >= min_required:
-                        break
+            tracks.extend(new_tracks)
+            unmatched = new_unmatched
 
-    except Exception as e:
-        logger.error(f"Fallback generation failed: {str(e)}")
+        except Exception as e:
+            logger.warning(f"Refill round {round_number + 1} failed: {e}")
+            break
 
-    # If we still don't have enough, try popular tracks as last resort
-    if len(current_tracks) < min_required:
-        logger.warning("Using popular tracks as final fallback")
-        # Build a query from analysis for fallback
-        fallback_parts = analysis.genres[:2] + analysis.moods[:2]
-        fallback_query = " ".join(fallback_parts) if fallback_parts else "popular music"
-        needed_popular = min(min_required - len(current_tracks), 10)
-        popular_tracks = await _get_popular_fallback_tracks(spotify_service, fallback_query, needed_popular)
-        current_tracks.extend(popular_tracks)
+    return tracks
 
-    return current_tracks
 
-async def _get_popular_fallback_tracks(spotify_service, query: str, count: int) -> List[Dict]:
-    """
-    Get popular tracks as a fallback when all else fails
-    """
-    try:
-        # Search for popular tracks related to the query
-        fallback_searches = [
-            f"{query} popular",
-            f"{query} hits",
-            "popular songs",
-            "top hits",
-            "best songs"
-        ]
-        
-        fallback_tracks = []
-        for search_term in fallback_searches:
-            try:
-                results = await spotify_service.search_track(search_term, limit=5)
-                fallback_tracks.extend(results)
-                if len(fallback_tracks) >= count:
-                    break
-            except Exception as e:
-                logger.warning(f"Fallback search failed for '{search_term}': {str(e)}")
-                continue
-        
-        return fallback_tracks[:count]
-    
-    except Exception as e:
-        logger.error(f"Popular fallback failed: {str(e)}")
-        return []
-
+# ==========================================================================
+# GENERATION ENDPOINTS
+# ==========================================================================
 
 @router.post("/generate-playlist", response_model=GeneratePlaylistResponse)
-async def generate_playlist(request: GeneratePlaylistRequest, db: Session = Depends(get_db)):
-    """
-    Main endpoint: Generate a playlist based on natural language query using multi-pass agentic approach.
+async def generate_playlist(
+    request: GeneratePlaylistRequest,
+    token: str = Depends(spotify_token),
+):
+    """Generate a playlist from a natural language query.
 
-    The generation follows three passes:
-    1. ANALYZE: Parse the query to extract genres, moods, eras, themes, etc.
-    2. GENERATE: Create track suggestions based on the analysis
-    3. VALIDATE: Ensure diversity (max 2 tracks per artist, no duplicates)
+    Runs three passes (analyse, generate, validate) then resolves each
+    suggestion against Spotify.
     """
     try:
-        # Initialize services
         openai_service = OpenAIService()
-        spotify_service = SpotifyService(request.spotify_access_token)
+        spotify_service = SpotifyService(token)
 
-        # Use the new agentic multi-pass generation
         suggested_tracks, analysis = await openai_service.generate_playlist_agentic(
             query=request.query,
-            track_count=request.track_count
+            track_count=request.track_count,
         )
-        logger.info(f"Generated {len(suggested_tracks)} tracks from agentic generation")
+        logger.info(f"Generated {len(suggested_tracks)} suggestions")
 
-        # Search all tracks on Spotify
-        spotify_tracks = await _batch_search_spotify_tracks(
-            spotify_service,
-            suggested_tracks,
-            target_count=request.track_count
+        spotify_tracks, unmatched = await _batch_search_spotify_tracks(
+            spotify_service, suggested_tracks, target_count=request.track_count
         )
-        logger.info(f"Found {len(spotify_tracks)} tracks on Spotify")
 
-        # Ensure we have enough tracks
         if len(spotify_tracks) < request.track_count:
-            spotify_tracks = await _ensure_minimum_tracks(
-                openai_service,
-                spotify_service,
-                analysis,
-                spotify_tracks,
-                min_required=request.track_count
+            spotify_tracks = await _refill_tracks(
+                openai_service, spotify_service, analysis,
+                spotify_tracks, unmatched, request.track_count,
             )
-            logger.info(f"Final track count after fallbacks: {len(spotify_tracks)}")
 
-        # Format tracks for response (no alternatives, just flat list)
         formatted_tracks = _format_spotify_tracks(spotify_tracks[:request.track_count])
-        logger.info(f"Returning {len(formatted_tracks)} formatted tracks")
-
-        # Generate playlist title
         playlist_name = await openai_service.generate_playlist_title(request.query)
+
+        if len(formatted_tracks) < request.track_count:
+            logger.info(
+                f"Returning {len(formatted_tracks)} of {request.track_count} requested tracks"
+            )
 
         return GeneratePlaylistResponse(
             playlist_name=playlist_name,
-            tracks=formatted_tracks
+            tracks=formatted_tracks,
+            requested_count=request.track_count,
+            found_count=len(formatted_tracks),
         )
 
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as e:
+        raise _spotify_http_error("Failed to generate playlist", e)
     except Exception as e:
-        logger.error(f"Error generating playlist: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error("Failed to generate playlist", e)
+
 
 @router.post("/generate-playlist-stream")
-async def generate_playlist_stream(request: GeneratePlaylistRequest, db: Session = Depends(get_db)):
-    """
-    Streaming endpoint for real-time playlist generation feedback.
-    Uses multi-pass agentic approach with progress updates for each pass:
-    1. ANALYZE: Parse the query
-    2. GENERATE: Create track suggestions
-    3. VALIDATE: Ensure diversity
-    4. SEARCH: Find tracks on Spotify
-    """
+async def generate_playlist_stream(
+    request: GeneratePlaylistRequest,
+    token: str = Depends(spotify_token),
+):
+    """Same generation flow, streamed as server-sent events for live progress."""
+
+    async def sse(payload: dict) -> str:
+        return f"data: {json.dumps(payload)}\n\n"
+
     async def generate_with_progress() -> AsyncGenerator[str, None]:
-        analysis = None
-
         try:
-            # Initialize services
             openai_service = OpenAIService()
-            spotify_service = SpotifyService(request.spotify_access_token)
+            spotify_service = SpotifyService(token)
 
-            # Track progress events to send to client
-            progress_events = []
-
-            async def progress_callback(pass_name: str, message: str):
-                event = {
-                    'type': 'pass_progress',
-                    'pass': pass_name,
-                    'message': message
-                }
-                progress_events.append(event)
-
-            # PASS 1: Analyze the query
-            yield f"data: {json.dumps({'type': 'pass_start', 'pass': 'analyze', 'message': 'Analyzing your music preferences...'})}\n\n"
-
+            # PASS 1: analyse the query
+            yield await sse({'type': 'pass_start', 'pass': 'analyze',
+                             'message': 'Analyzing your music preferences...'})
             analysis = await openai_service.analyze_query(request.query)
             genres_str = ', '.join(analysis.genres[:3]) if analysis.genres else 'various genres'
             moods_str = ', '.join(analysis.moods[:2]) if analysis.moods else 'mixed moods'
-            analysis_summary = f"Found: {genres_str} / {moods_str}"
-            yield f"data: {json.dumps({'type': 'pass_complete', 'pass': 'analyze', 'message': analysis_summary})}\n\n"
+            yield await sse({'type': 'pass_complete', 'pass': 'analyze',
+                             'message': f"Found: {genres_str} / {moods_str}"})
 
-            # PASS 2: Generate tracks
-            yield f"data: {json.dumps({'type': 'pass_start', 'pass': 'generate', 'message': f'Generating {request.track_count} track recommendations...'})}\n\n"
-
+            # PASS 2: generate suggestions
+            yield await sse({'type': 'pass_start', 'pass': 'generate',
+                             'message': f'Generating {request.track_count} track recommendations...'})
             suggested_tracks = await openai_service.generate_tracks_from_analysis(
-                analysis,
-                request.track_count
+                analysis, request.track_count
             )
-            yield f"data: {json.dumps({'type': 'pass_complete', 'pass': 'generate', 'message': f'Generated {len(suggested_tracks)} potential tracks'})}\n\n"
+            yield await sse({'type': 'pass_complete', 'pass': 'generate',
+                             'message': f'Generated {len(suggested_tracks)} potential tracks'})
 
-            # PASS 3: Validate diversity
-            yield f"data: {json.dumps({'type': 'pass_start', 'pass': 'validate', 'message': 'Validating playlist diversity...'})}\n\n"
-
-            diversity_report = await openai_service.validate_diversity(suggested_tracks, analysis)
+            # PASS 3: diversity
+            yield await sse({'type': 'pass_start', 'pass': 'validate',
+                             'message': 'Validating playlist diversity...'})
+            diversity_report = openai_service.validate_diversity(suggested_tracks, analysis)
             if diversity_report.is_valid:
-                yield f"data: {json.dumps({'type': 'pass_complete', 'pass': 'validate', 'message': 'Diversity check passed'})}\n\n"
+                yield await sse({'type': 'pass_complete', 'pass': 'validate',
+                                 'message': 'Diversity check passed'})
             else:
                 issue_msg = diversity_report.issues[0] if diversity_report.issues else "diversity issues"
-                yield f"data: {json.dumps({'type': 'pass_progress', 'pass': 'validate', 'message': 'Fixing: ' + issue_msg})}\n\n"
-                # Apply diversity fixes
-                suggested_tracks = await _apply_diversity_fixes(
-                    openai_service, analysis, suggested_tracks, diversity_report, request.track_count
-                )
-                yield f"data: {json.dumps({'type': 'pass_complete', 'pass': 'validate', 'message': 'Diversity issues resolved'})}\n\n"
+                yield await sse({'type': 'pass_progress', 'pass': 'validate',
+                                 'message': f'Fixing: {issue_msg}'})
+                suggested_tracks = openai_service.apply_diversity_fixes(suggested_tracks)
+                if len(suggested_tracks) < request.track_count:
+                    needed = request.track_count - len(suggested_tracks)
+                    replacements = await openai_service.generate_replacement_tracks(
+                        analysis, needed, suggested_tracks, diversity_report.artist_violations
+                    )
+                    suggested_tracks.extend(replacements[:needed])
+                yield await sse({'type': 'pass_complete', 'pass': 'validate',
+                                 'message': 'Diversity issues resolved'})
 
-            # PASS 4: Search Spotify
-            yield f"data: {json.dumps({'type': 'pass_start', 'pass': 'search', 'message': 'Searching Spotify for tracks...'})}\n\n"
+            # PASS 4: resolve against Spotify, streaming each hit as it lands
+            yield await sse({'type': 'pass_start', 'pass': 'search',
+                             'message': 'Searching Spotify for tracks...'})
 
-            spotify_tracks = []
+            spotify_tracks: List[Dict] = []
+            unmatched: List[Dict] = []
             seen_ids = set()
             batch_size = 10
 
             for i in range(0, len(suggested_tracks), batch_size):
                 batch = suggested_tracks[i:i + batch_size]
-                batch_tasks = [_search_single_track(spotify_service, "", track) for track in batch]
-                batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+                results = await asyncio.gather(
+                    *(_search_single_track(spotify_service, track) for track in batch),
+                    return_exceptions=True,
+                )
 
-                for result in batch_results:
-                    if not isinstance(result, Exception) and result:
-                        spotify_id = result.get("spotify_id")
-                        if spotify_id and spotify_id not in seen_ids:
-                            spotify_tracks.append(result)
-                            seen_ids.add(spotify_id)
-                            # Send track found event
-                            yield f"data: {json.dumps({'type': 'track_found', 'track': {'title': result['title'], 'artist': result['artist'], 'album_art': result.get('album_art')}, 'count': len(spotify_tracks)})}\n\n"
+                for suggestion, result in zip(batch, results):
+                    if isinstance(result, Exception) or not result:
+                        unmatched.append(suggestion)
+                        continue
+                    spotify_id = result.get("spotify_id")
+                    if spotify_id and spotify_id not in seen_ids:
+                        spotify_tracks.append(result)
+                        seen_ids.add(spotify_id)
+                        yield await sse({
+                            'type': 'track_found',
+                            'track': {
+                                'title': result['title'],
+                                'artist': result['artist'],
+                                'spotify_id': spotify_id,
+                                'album_art': result.get('album_art'),
+                            },
+                            'count': len(spotify_tracks),
+                        })
 
-                # Early exit if we have enough
                 if len(spotify_tracks) >= request.track_count:
                     break
 
-            yield f"data: {json.dumps({'type': 'pass_complete', 'pass': 'search', 'message': f'Found {len(spotify_tracks)} tracks on Spotify'})}\n\n"
+            yield await sse({'type': 'pass_complete', 'pass': 'search',
+                             'message': f'Found {len(spotify_tracks)} tracks on Spotify'})
 
-            # Ensure minimum tracks if needed
             if len(spotify_tracks) < request.track_count:
-                yield f"data: {json.dumps({'type': 'status', 'message': 'Finding additional tracks...'})}\n\n"
-                spotify_tracks = await _ensure_minimum_tracks(
-                    openai_service, spotify_service, analysis, spotify_tracks, request.track_count
+                yield await sse({'type': 'status', 'message': 'Looking for a few more tracks...'})
+                spotify_tracks = await _refill_tracks(
+                    openai_service, spotify_service, analysis,
+                    spotify_tracks, unmatched, request.track_count,
                 )
 
-            # Format tracks for response (flat list, no alternatives)
             formatted_tracks = _format_spotify_tracks(spotify_tracks[:request.track_count])
 
-            # Generate title
-            yield f"data: {json.dumps({'type': 'status', 'message': 'Creating playlist title...'})}\n\n"
+            yield await sse({'type': 'status', 'message': 'Creating playlist title...'})
             playlist_name = await openai_service.generate_playlist_title(request.query)
 
-            # Send final result
-            result = {
+            # Say so when the playlist is short rather than quietly padding it.
+            if len(formatted_tracks) < request.track_count:
+                yield await sse({
+                    'type': 'partial',
+                    'requested': request.track_count,
+                    'found': len(formatted_tracks),
+                    'message': (
+                        f'Found {len(formatted_tracks)} of {request.track_count} tracks. '
+                        'Some suggestions were not available on Spotify.'
+                    ),
+                })
+
+            yield await sse({
                 'type': 'complete',
                 'playlist': {
                     'playlist_name': playlist_name,
                     'tracks': formatted_tracks,
-                    'track_count': len(formatted_tracks)
-                }
-            }
-            yield f"data: {json.dumps(result)}\n\n"
+                    'track_count': len(formatted_tracks),
+                    'requested_count': request.track_count,
+                },
+            })
 
+        except asyncio.CancelledError:
+            # Client navigated away or hit cancel; nothing to report.
+            logger.info("Playlist stream cancelled by client")
+            raise
         except Exception as e:
-            logger.error(f"Error in streaming playlist generation: {str(e)}")
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            logger.exception(f"Error in streaming playlist generation: {e}")
+            yield await sse({
+                'type': 'error',
+                'message': 'Playlist generation failed. Please try again.',
+            })
 
     return StreamingResponse(
         generate_with_progress(),
-        media_type="text/plain",
+        # Must be text/event-stream for the frames below to be valid SSE.
+        # CORS headers come from CORSMiddleware; setting them here too produced
+        # a duplicate Access-Control-Allow-Origin, which browsers reject.
+        media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Headers": "*",
-        }
+            "X-Accel-Buffering": "no",  # stop nginx buffering the stream
+        },
     )
 
 
-async def _apply_diversity_fixes(
-    openai_service,
-    analysis: QueryAnalysis,
-    tracks: List[Dict],
-    report,
-    target_count: int
-) -> List[Dict]:
-    """
-    Apply diversity fixes by removing problematic tracks and generating replacements.
-    """
-    # Remove tracks from over-represented artists
-    artist_count = {}
-    cleaned_tracks = []
-
-    for track in tracks:
-        artist = track.get('artist', '').lower()
-        if artist_count.get(artist, 0) < 2:
-            cleaned_tracks.append(track)
-            artist_count[artist] = artist_count.get(artist, 0) + 1
-
-    # Remove duplicate track names
-    seen_names = set()
-    final_tracks = []
-    for track in cleaned_tracks:
-        name = track.get('track_name', track.get('title', '')).lower()
-        if name not in seen_names:
-            final_tracks.append(track)
-            seen_names.add(name)
-
-    # Generate replacements if needed
-    if len(final_tracks) < target_count:
-        needed = target_count - len(final_tracks) + 5
-        replacements = await openai_service.generate_replacement_tracks(
-            analysis,
-            needed,
-            final_tracks,
-            report.artist_violations
-        )
-        final_tracks.extend(replacements)
-
-    return final_tracks[:target_count + 5]  # Return with small buffer
+# ==========================================================================
+# SPOTIFY / PROFILE ENDPOINTS
+# ==========================================================================
 
 @router.get("/search-tracks")
-async def search_tracks(q: str, spotify_access_token: str):
-    """
-    Search for specific tracks on Spotify
-    """
+async def search_tracks(q: str, token: str = Depends(spotify_token)):
+    """Search Spotify for tracks matching a free-text query."""
     try:
-        spotify_service = SpotifyService(spotify_access_token)
-        results = await spotify_service.search_track(q)
-        return {"results": results}
+        spotify_service = SpotifyService(token)
+        return {"results": await spotify_service.search_track(q)}
+    except httpx.HTTPStatusError as e:
+        raise _spotify_http_error("Failed to search tracks", e)
     except Exception as e:
-        logger.error(f"Error searching tracks: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error("Failed to search tracks", e)
+
 
 @router.get("/user-info")
-async def get_user_info(spotify_access_token: str, db: Session = Depends(get_db)):
-    """
-    Get user profile information and validate token
-    """
+async def get_user_info(token: str = Depends(spotify_token), db: Session = Depends(get_db)):
+    """Return the caller's Spotify profile, merged with stored profile fields."""
     try:
-        spotify_service = SpotifyService(spotify_access_token)
+        spotify_service = SpotifyService(token)
         user_profile = await spotify_service.get_user_profile()
-        
-        # Get or create user record
+
         user_service = UserService(db)
         user = user_service.get_user_by_spotify_username(user_profile["id"])
-        
+
         response_data = {
             "id": user_profile["id"],
             "display_name": user_profile.get("display_name", user_profile["id"]),
             "email": user_profile.get("email"),
-            "images": user_profile.get("images", [])
+            "images": user_profile.get("images", []),
         }
-        
-        # Add stored profile data if user exists
+
         if user:
             response_data.update({
                 "first_name": user.first_name,
                 "last_name": user.last_name,
-                "location": user.location
+                "location": user.location,
+                # Never return the key itself, only whether one is stored.
+                "has_openai_key": bool(user.openai_api_key),
             })
-        
+        else:
+            response_data["has_openai_key"] = False
+
         return response_data
     except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error getting user info: {e.response.status_code}")
-        if e.response.status_code in (401, 403):
-            raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _spotify_http_error("Failed to get user info", e)
     except Exception as e:
-        logger.error(f"Error getting user info: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error("Failed to get user info", e)
+
 
 @router.post("/create-playlist")
-async def create_playlist(request: CreatePlaylistRequest, db: Session = Depends(get_db)):
-    """
-    Create a playlist in user's Spotify account
-    """
+async def create_playlist(
+    request: CreatePlaylistRequest,
+    token: str = Depends(spotify_token),
+    db: Session = Depends(get_db),
+):
+    """Create the playlist in the caller's Spotify account."""
     try:
-        spotify_service = SpotifyService(request.spotify_access_token)
-        
-        # Verify token is valid by getting user profile
+        spotify_service = SpotifyService(token)
         user_profile = await spotify_service.get_user_profile()
-        
-        # Create playlist
+
         playlist = await spotify_service.create_playlist(
-            request.name, 
-            request.description or f"Generated by Aelyra"
+            request.name,
+            request.description or "Generated by Aelyra",
         )
-        
-        # Add tracks to playlist
+
         if request.track_ids:
             await spotify_service.add_tracks_to_playlist(playlist["id"], request.track_ids)
-        
-        # Save playlist history
+
         try:
             user_service = UserService(db)
             user = user_service.get_user_by_spotify_username(user_profile["id"])
-            
             if user:
-                # Get detailed track information
                 track_details = await spotify_service.get_tracks_details(request.track_ids)
-                
-                # Save playlist history
-                playlist_history_service = PlaylistHistoryService(db)
-                playlist_history_service.create_playlist_history(
+                PlaylistHistoryService(db).create_playlist_history(
                     user_id=user.id,
                     playlist_name=request.name,
                     user_description=request.description or "",
                     spotify_playlist_id=playlist["id"],
                     spotify_playlist_url=playlist["external_urls"]["spotify"],
-                    track_data=track_details
+                    track_data=track_details,
                 )
         except Exception as history_error:
-            # Log the error but don't fail the playlist creation
-            logger.error(f"Error saving playlist history: {str(history_error)}")
-        
+            # History is a nicety; a failure here must not lose the playlist.
+            db.rollback()
+            logger.exception(f"Error saving playlist history: {history_error}")
+
         return {
             "playlist_id": playlist["id"],
             "playlist_url": playlist["external_urls"]["spotify"],
-            "message": "Playlist created successfully"
+            "message": "Playlist created successfully",
         }
-        
+
+    except HTTPException:
+        raise
     except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error creating playlist: {e.response.status_code}")
-        if e.response.status_code in (401, 403):
-            raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _spotify_http_error("Failed to create playlist", e)
     except Exception as e:
-        logger.error(f"Error creating playlist: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error("Failed to create playlist", e)
+
 
 @router.put("/user-profile")
-async def update_user_profile(request: UpdateProfileRequest, db: Session = Depends(get_db)):
-    """
-    Update user profile information
-    """
+async def update_user_profile(
+    request: UpdateProfileRequest,
+    token: str = Depends(spotify_token),
+    db: Session = Depends(get_db),
+):
+    """Update the caller's stored profile fields."""
     try:
-        spotify_service = SpotifyService(request.spotify_access_token)
+        spotify_service = SpotifyService(token)
         user_profile = await spotify_service.get_user_profile()
-        
+
         user_service = UserService(db)
         user = user_service.get_user_by_spotify_username(user_profile["id"])
-        
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
-        
-        # Update user with provided data
-        update_data = {k: v for k, v in {
+
+        update_data = {
             "first_name": request.first_name,
             "last_name": request.last_name,
-            "location": request.location
-        }.items() if v is not None}
-        
+            "location": request.location,
+        }
+
+        # An empty key field means "unchanged"; clearing needs an explicit flag.
+        if request.remove_openai_api_key:
+            update_data["openai_api_key"] = UNSET
+        elif request.openai_api_key:
+            update_data["openai_api_key"] = request.openai_api_key
+
         updated_user = user_service.update_user(user, **update_data)
-        
+
         return {
             "message": "Profile updated successfully",
             "first_name": updated_user.first_name,
             "last_name": updated_user.last_name,
-            "location": updated_user.location
+            "location": updated_user.location,
+            "has_openai_key": bool(updated_user.openai_api_key),
         }
-        
+
+    except HTTPException:
+        raise
     except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error updating user profile: {e.response.status_code}")
-        if e.response.status_code in (401, 403):
-            raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _spotify_http_error("Failed to update user profile", e)
     except Exception as e:
-        logger.error(f"Error updating user profile: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error("Failed to update user profile", e)
+
 
 @router.get("/user-playlists")
-async def get_user_playlists(spotify_access_token: str, limit: int = 20, offset: int = 0, db: Session = Depends(get_db)):
-    """
-    Get user's playlist history
-    """
+async def get_user_playlists(
+    limit: int = 20,
+    offset: int = 0,
+    token: str = Depends(spotify_token),
+    db: Session = Depends(get_db),
+):
+    """Return the caller's playlist history, newest first."""
     try:
-        spotify_service = SpotifyService(spotify_access_token)
+        limit = max(1, min(limit, 50))
+        offset = max(0, offset)
+
+        spotify_service = SpotifyService(token)
         user_profile = await spotify_service.get_user_profile()
-        
+
         user_service = UserService(db)
         user = user_service.get_user_by_spotify_username(user_profile["id"])
-        
         if not user:
             return {"playlists": []}
-        
-        playlist_history_service = PlaylistHistoryService(db)
-        # Use eager loading to prevent N+1 queries
-        playlists = playlist_history_service.get_user_playlists(user.id, limit, offset, include_tracks=True)
 
-        # Collect all track IDs for batch fetching album art
+        playlists = PlaylistHistoryService(db).get_user_playlists(
+            user.id, limit, offset, include_tracks=True
+        )
+
+        # Collect the cover tracks for every playlist, then resolve their album
+        # art in as few Spotify calls as possible (50 ids per request).
+        playlist_track_map = {}
         all_track_ids = []
-        playlist_track_map = {}  # Map playlist_hash -> list of track_ids for album art
-
         for playlist in playlists:
-            # Access eagerly loaded tracks
-            tracks = playlist.tracks[:4] if playlist.tracks else []
-            track_ids = [track.spotify_track_id for track in tracks]
-            all_track_ids.extend(track_ids)
+            track_ids = [t.spotify_track_id for t in (playlist.tracks or [])[:4]]
             playlist_track_map[playlist.playlist_hash] = track_ids
+            all_track_ids.extend(track_ids)
 
-        # Batch fetch album art for all playlists in one call (up to 50 tracks)
         album_art_cache = {}
-        if all_track_ids:
+        unique_track_ids = list(dict.fromkeys(all_track_ids))
+        for chunk_start in range(0, len(unique_track_ids), 50):
+            chunk = unique_track_ids[chunk_start:chunk_start + 50]
             try:
-                # Fetch up to 50 tracks at once
-                unique_track_ids = list(set(all_track_ids))[:50]
-                track_details = await spotify_service.get_tracks_details(unique_track_ids)
-                for track in track_details:
+                for track in await spotify_service.get_tracks_details(chunk):
                     if track and track.get('spotify_id') and track.get('album_art'):
                         album_art_cache[track['spotify_id']] = track['album_art']
             except Exception as e:
-                logger.warning(f"Failed to batch fetch album art: {e}")
+                logger.warning(f"Failed to fetch album art batch: {e}")
 
         playlist_data = []
         for playlist in playlists:
-            # Get album art from cache
             track_ids = playlist_track_map.get(playlist.playlist_hash, [])
-            album_art_urls = [album_art_cache.get(tid) for tid in track_ids if album_art_cache.get(tid)]
+            album_art_urls = [album_art_cache[tid] for tid in track_ids if tid in album_art_cache]
 
             playlist_data.append({
                 "id": playlist.playlist_hash,
@@ -702,144 +641,113 @@ async def get_user_playlists(spotify_access_token: str, limit: int = 20, offset:
                 "spotify_url": playlist.spotify_playlist_url,
                 "created_at": playlist.created_at.isoformat(),
                 "track_count": playlist.track_count,
-                "album_art": album_art_urls[:4],  # Limit to 4 for 2x2 grid
+                "album_art": album_art_urls[:4],
                 "tracks": [
                     {
                         "position": track.position,
                         "name": track.track_name,
                         "artist": track.artist_name,
                         "album": track.album_name,
-                        "spotify_id": track.spotify_track_id
+                        "spotify_id": track.spotify_track_id,
                     }
                     for track in sorted(playlist.tracks, key=lambda t: t.position)
-                ]
+                ],
             })
-        
+
         return {"playlists": playlist_data}
-        
+
     except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error getting user playlists: {e.response.status_code}")
-        if e.response.status_code in (401, 403):
-            raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _spotify_http_error("Failed to get playlist history", e)
     except Exception as e:
-        logger.error(f"Error getting user playlists: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error("Failed to get playlist history", e)
+
 
 @router.post("/upload-playlist")
-async def upload_playlist(request: UploadPlaylistRequest, db: Session = Depends(get_db)):
-    """
-    Upload a playlist from an M3U file containing Spotify track URLs
-    """
+async def upload_playlist(
+    request: UploadPlaylistRequest,
+    token: str = Depends(spotify_token),
+    db: Session = Depends(get_db),
+):
+    """Create a Spotify playlist from an uploaded M3U file."""
     try:
-        # Validate M3U content
         is_valid, error_msg = M3UParser.validate_file_content(request.m3u_content)
         if not is_valid:
             raise HTTPException(status_code=400, detail=f"Invalid M3U file: {error_msg}")
 
-        # Parse M3U file
         try:
             parsed_data = M3UParser.parse(request.m3u_content)
-            track_ids = parsed_data['track_ids']
-            warnings = parsed_data['warnings']
-
-            logger.info(f"Parsed M3U file: {len(track_ids)} tracks, {len(warnings)} warnings")
-
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
-        # Initialize Spotify service
-        spotify_service = SpotifyService(request.spotify_access_token)
+        track_ids = parsed_data['track_ids']
+        warnings = parsed_data['warnings']
+        logger.info(f"Parsed M3U: {len(track_ids)} tracks, {len(warnings)} warnings")
 
-        # Verify token is valid by getting user profile
+        spotify_service = SpotifyService(token)
         user_profile = await spotify_service.get_user_profile()
 
-        # Get track details from Spotify to verify they exist
         try:
             track_details = await spotify_service.get_tracks_details(track_ids)
-
-            # Filter out tracks that don't exist (None values)
-            valid_tracks = [track for track in track_details if track is not None]
-            valid_track_ids = [track['spotify_id'] for track in valid_tracks]
-
-            if not valid_track_ids:
-                raise HTTPException(
-                    status_code=400,
-                    detail="None of the tracks in the M3U file are available on Spotify"
-                )
-
-            # Warn if some tracks were skipped
-            skipped_count = len(track_ids) - len(valid_track_ids)
-            if skipped_count > 0:
-                warnings.append(f"{skipped_count} tracks were not found on Spotify and were skipped")
-                logger.warning(f"Skipped {skipped_count} unavailable tracks")
-
         except Exception as e:
-            logger.error(f"Error fetching track details: {str(e)}")
+            raise _server_error("Failed to verify tracks on Spotify", e)
+
+        valid_tracks = [track for track in track_details if track is not None]
+        valid_track_ids = [track['spotify_id'] for track in valid_tracks]
+
+        # Raised outside the try above: it used to sit inside it, where the
+        # broad handler turned this 400 into a misleading 500.
+        if not valid_track_ids:
             raise HTTPException(
-                status_code=500,
-                detail="Failed to verify tracks on Spotify"
+                status_code=400,
+                detail="None of the tracks in the M3U file are available on Spotify",
             )
 
-        # Generate playlist name using OpenAI (or use custom name if provided)
+        skipped_count = len(track_ids) - len(valid_track_ids)
+        if skipped_count > 0:
+            warnings.append(f"{skipped_count} tracks were not found on Spotify and were skipped")
+
         if request.custom_name and request.custom_name.strip():
             playlist_name = request.custom_name.strip()
         else:
-            # Generate AI name based on track metadata
             try:
                 openai_service = OpenAIService()
-
-                # Create a descriptive query from track artists and names
-                sample_artists = list(set([track['artist'] for track in valid_tracks[:10]]))
-                sample_tracks = [track['name'] for track in valid_tracks[:5]]
-
-                # Create a query for the AI to generate a name
-                query = f"A playlist with {len(valid_track_ids)} tracks featuring artists like {', '.join(sample_artists[:5])}"
-
+                sample_artists = list(dict.fromkeys(t['artist'] for t in valid_tracks[:10]))
+                query = (
+                    f"A playlist of {len(valid_track_ids)} tracks featuring artists like "
+                    f"{', '.join(sample_artists[:5])}"
+                )
                 playlist_name = await openai_service.generate_playlist_title(query)
-                logger.info(f"Generated playlist name: {playlist_name}")
-
             except Exception as e:
-                logger.warning(f"Failed to generate AI playlist name: {str(e)}, using fallback")
+                logger.warning(f"Failed to generate playlist name, using fallback: {e}")
                 playlist_name = "Uploaded Playlist"
 
-        # Create playlist in Spotify
         try:
             playlist = await spotify_service.create_playlist(
                 playlist_name,
-                f"Uploaded via Aelyra from M3U file ({len(valid_track_ids)} tracks)"
+                f"Uploaded via Aelyra from M3U file ({len(valid_track_ids)} tracks)",
             )
-
-            # Add tracks to playlist
             await spotify_service.add_tracks_to_playlist(playlist["id"], valid_track_ids)
-
+        except httpx.HTTPStatusError as e:
+            raise _spotify_http_error("Failed to create playlist on Spotify", e)
         except Exception as e:
-            logger.error(f"Error creating playlist: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to create playlist on Spotify: {str(e)}"
-            )
+            raise _server_error("Failed to create playlist on Spotify", e)
 
-        # Save playlist history
         try:
             user_service = UserService(db)
             user = user_service.get_user_by_spotify_username(user_profile["id"])
-
             if user:
-                playlist_history_service = PlaylistHistoryService(db)
-                playlist_history_service.create_playlist_history(
+                PlaylistHistoryService(db).create_playlist_history(
                     user_id=user.id,
                     playlist_name=playlist_name,
-                    user_description=f"Uploaded from M3U file",
+                    user_description="Uploaded from M3U file",
                     spotify_playlist_id=playlist["id"],
                     spotify_playlist_url=playlist["external_urls"]["spotify"],
-                    track_data=valid_tracks
+                    track_data=valid_tracks,
                 )
         except Exception as history_error:
-            # Log the error but don't fail the playlist creation
-            logger.error(f"Error saving playlist history: {str(history_error)}")
+            db.rollback()
+            logger.exception(f"Error saving playlist history: {history_error}")
 
-        # Return success response
         return {
             "success": True,
             "playlist_id": playlist["id"],
@@ -848,16 +756,12 @@ async def upload_playlist(request: UploadPlaylistRequest, db: Session = Depends(
             "tracks_added": len(valid_track_ids),
             "tracks_skipped": skipped_count,
             "warnings": warnings,
-            "message": f"Playlist '{playlist_name}' created successfully with {len(valid_track_ids)} tracks"
+            "message": f"Playlist '{playlist_name}' created with {len(valid_track_ids)} tracks",
         }
 
     except HTTPException:
         raise
     except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error uploading playlist: {e.response.status_code}")
-        if e.response.status_code in (401, 403):
-            raise HTTPException(status_code=401, detail="Spotify token expired or invalid")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _spotify_http_error("Failed to upload playlist", e)
     except Exception as e:
-        logger.error(f"Error uploading playlist: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _server_error("Failed to upload playlist", e)
