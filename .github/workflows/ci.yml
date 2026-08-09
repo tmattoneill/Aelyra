@@ -27,7 +27,9 @@ jobs:
         env:
           # The suite mocks every outbound call; these only satisfy the config
           # that is read at import time.
-          DATABASE_URL: sqlite:///:memory:
+          # Quoted: a value ending in a colon is a mapping indicator to YAML,
+          # which made this whole file unparseable and silently ran no jobs.
+          DATABASE_URL: "sqlite:///:memory:"
           SPOTIFY_CLIENT_ID: test-client-id
           SPOTIFY_CLIENT_SECRET: test-client-secret
           OPENAI_API_KEY: test-key
@@ -37,7 +39,7 @@ jobs:
           alembic upgrade head
           alembic check
         env:
-          DATABASE_URL: sqlite:///./ci.db
+          DATABASE_URL: "sqlite:///./ci.db"
 
   frontend:
     runs-on: ubuntu-latest
