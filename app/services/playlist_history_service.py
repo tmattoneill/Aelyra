@@ -1,10 +1,11 @@
-from sqlalchemy.orm import Session, joinedload
-from app.models.playlist_history import PlaylistHistory, PlaylistTrack
-from app.models.user import User
-from typing import List, Optional
 import hashlib
-from datetime import datetime, timezone
 import logging
+from datetime import datetime, timezone
+from typing import List, Optional
+
+from sqlalchemy.orm import Session, joinedload
+
+from app.models.playlist_history import PlaylistHistory, PlaylistTrack
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,7 @@ class PlaylistHistoryService:
             self.db.rollback()
             logger.error(f"Failed to create playlist history: {str(e)}")
             raise
-    
+
     def get_user_playlists(self, user_id: int, limit: int = 50, offset: int = 0,
                            include_tracks: bool = False) -> List[PlaylistHistory]:
         """
@@ -100,13 +101,13 @@ class PlaylistHistoryService:
                 .offset(offset)
                 .limit(limit)
                 .all())
-    
+
     def get_playlist_details(self, playlist_hash: str) -> Optional[PlaylistHistory]:
         """Get detailed playlist information including tracks"""
         return (self.db.query(PlaylistHistory)
                 .filter(PlaylistHistory.playlist_hash == playlist_hash)
                 .first())
-    
+
     def get_playlist_tracks(self, playlist_history_id: int) -> List[PlaylistTrack]:
         """Get all tracks for a specific playlist"""
         return (self.db.query(PlaylistTrack)

@@ -136,7 +136,7 @@ Open your browser and navigate to `http://localhost:3000`
 1. **Describe Your Playlist**: Enter a natural language description (e.g., "upbeat pop songs for working out")
 2. **Optional Personal OpenAI Key**: Use your own OpenAI API key for potentially better results
 3. **Generate Playlist**: Click "Generate Playlist" to get AI-powered track suggestions
-4. **Customize Selection**: Review suggestions, swap alternatives, and select your favorite tracks
+4. **Review Selection**: Keep the tracks you want and drop the rest before saving
 5. **Create in Spotify**: Click "Create Playlist in Spotify" to save it to your account
 
 ### Account Management
@@ -237,7 +237,7 @@ Aelyra/
 ├── database.py             # Database connection and setup
 ├── .env                    # Environment configuration
 ├── requirements.txt        # Python dependencies
-├── deploy-prod.sh          # Production deployment script
+├── utils/deploy-prod.sh    # Production deployment script
 └── README.md              # This file
 ```
 
@@ -306,10 +306,10 @@ Use the included deployment script for production deployments:
 
 ```bash
 # Dry run to test deployment process
-./deploy-prod.sh --dry-run
+./utils/deploy-prod.sh --dry-run
 
 # Full deployment
-./deploy-prod.sh
+./utils/deploy-prod.sh
 ```
 
 The script handles:

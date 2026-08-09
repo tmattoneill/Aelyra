@@ -1,15 +1,22 @@
 export default {
   testEnvironment: 'jsdom',
   setupFilesAfterEnv: ['<rootDir>/src/setupTests.js'],
-  moduleFileExtensions: ['js', 'jsx', 'ts', 'tsx', 'json'],
+  moduleFileExtensions: ['js', 'jsx', 'json'],
   transform: {
-    '^.+\\.(js|jsx|ts|tsx)$': ['babel-jest', { presets: ['@babel/preset-react'] }],
+    '^.+\\.(js|jsx)$': ['babel-jest', {
+      presets: [
+        ['@babel/preset-env', { targets: { node: 'current' } }],
+        ['@babel/preset-react', { runtime: 'automatic' }],
+      ],
+    }],
   },
   testMatch: [
-    '<rootDir>/src/**/__tests__/**/*.(js|jsx|ts|tsx)',
-    '<rootDir>/src/**/?(*.)(spec|test).(js|jsx|ts|tsx)',
+    '<rootDir>/src/**/__tests__/**/*.test.(js|jsx)',
+    '<rootDir>/src/**/?(*.)(spec|test).(js|jsx)',
   ],
-  moduleNameMapping: {
+  // The key is moduleNameMapper. It was spelled moduleNameMapping, which Jest
+  // ignores, so the CSS stub was never actually applied.
+  moduleNameMapper: {
     '\\.(css|less|scss|sass)$': 'identity-obj-proxy',
   },
 };

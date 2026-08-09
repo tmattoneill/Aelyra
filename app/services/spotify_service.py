@@ -1,11 +1,12 @@
 
-import httpx
-from typing import List, Dict, Optional
-import logging
 import hashlib
-from functools import wraps
-from cachetools import TTLCache
+import logging
 import threading
+from functools import wraps
+from typing import Dict, List
+
+import httpx
+from cachetools import TTLCache
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ class SpotifyService:
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
         }
-    
+
     @cache_response(ttl=300)  # Cache search results for 5 minutes
     async def search_track(self, query: str, limit: int = 5) -> List[Dict]:
         """
@@ -71,7 +72,7 @@ class SpotifyService:
                 "type": "track",
                 "limit": limit
             }
-            
+
             async with httpx.AsyncClient() as client:
                 response = await client.get(
                     f"{self.base_url}/search",
@@ -81,9 +82,9 @@ class SpotifyService:
                 )
                 response.raise_for_status()
                 data = response.json()
-            
+
             tracks = []
-            
+
             for track in data["tracks"]["items"]:
                 track_data = {
                     "title": track["name"],
@@ -94,16 +95,16 @@ class SpotifyService:
                     "preview_url": track.get("preview_url")
                 }
                 tracks.append(track_data)
-            
+
             return tracks
-            
+
         except httpx.HTTPError as e:
             logger.error(f"Spotify search error: {str(e)}")
             raise Exception(f"Failed to search Spotify: {str(e)}")
         except Exception as e:
             logger.error(f"Unexpected error in search_track: {str(e)}")
             raise Exception(f"Failed to search Spotify: {str(e)}")
-    
+
     async def get_user_profile(self) -> Dict:
         """
         Get current user's profile
@@ -117,11 +118,11 @@ class SpotifyService:
                 )
                 response.raise_for_status()
                 return response.json()
-            
+
         except httpx.HTTPError as e:
             logger.error(f"Failed to get user profile: {str(e)}")
             raise Exception(f"Failed to get user profile: {str(e)}")
-    
+
     async def create_playlist(self, name: str, description: str = "") -> Dict:
         """
         Create a new playlist for the user
@@ -132,7 +133,7 @@ class SpotifyService:
                 "description": description,
                 "public": False
             }
-            
+
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     f"{self.base_url}/me/playlists",
@@ -142,11 +143,11 @@ class SpotifyService:
                 )
                 response.raise_for_status()
                 return response.json()
-            
+
         except httpx.HTTPError as e:
             logger.error(f"Failed to create playlist: {str(e)}")
             raise Exception(f"Failed to create playlist: {str(e)}")
-    
+
     async def add_tracks_to_playlist(self, playlist_id: str, track_ids: List[str]) -> Dict:
         """
         Add tracks to a playlist
@@ -154,9 +155,9 @@ class SpotifyService:
         try:
             # Convert track IDs to Spotify URIs
             uris = [f"spotify:track:{track_id}" for track_id in track_ids]
-            
+
             data = {"uris": uris}
-            
+
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     f"{self.base_url}/playlists/{playlist_id}/tracks",
@@ -166,11 +167,11 @@ class SpotifyService:
                 )
                 response.raise_for_status()
                 return response.json()
-            
+
         except httpx.HTTPError as e:
             logger.error(f"Failed to add tracks to playlist: {str(e)}")
             raise Exception(f"Failed to add tracks to playlist: {str(e)}")
-    
+
     @cache_response(ttl=3600, use_track_cache=True)  # Cache track details for 1 hour
     async def get_tracks_details(self, track_ids: List[str]) -> List[Dict]:
         """
@@ -179,12 +180,12 @@ class SpotifyService:
         try:
             # Spotify API allows up to 50 tracks per request
             track_data = []
-            
+
             async with httpx.AsyncClient() as client:
                 for i in range(0, len(track_ids), 50):
                     batch_ids = track_ids[i:i+50]
                     params = {"ids": ",".join(batch_ids)}
-                    
+
                     response = await client.get(
                         f"{self.base_url}/tracks",
                         headers=self.headers,
@@ -192,9 +193,9 @@ class SpotifyService:
                         timeout=10.0
                     )
                     response.raise_for_status()
-                    
+
                     data = response.json()
-                    
+
                     for track in data["tracks"]:
                         if track:  # Track might be None if not found
                             track_info = {
@@ -205,9 +206,9 @@ class SpotifyService:
                                 "album_art": track["album"]["images"][0]["url"] if track["album"]["images"] else None
                             }
                             track_data.append(track_info)
-            
+
             return track_data
-            
+
         except httpx.HTTPError as e:
             logger.error(f"Failed to get track details: {str(e)}")
             raise Exception(f"Failed to get track details: {str(e)}")

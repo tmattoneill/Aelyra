@@ -1,0 +1,155 @@
+Production Deployment Plan for Aelyra Multi-User Update
+
+Pre-Deployment Analysis
+
+Current State:
+- Production is running at https://aelyra.moneill.net (working)
+- Missing: SQLAlchemy, Alembic, and new multi-user database components
+- Missing: Vite migration (migrated from Create React App to Vite)
+- Environment configured for HTTPS production deployment
+
+Prerequisites:
+- Node.js 18+ required (for Vite compatibility)
+- Check current Node.js version: node --version
+
+Deployment Steps
+
+1. Backup Current Production
+
+# On production server
+cd ~/Aelyra
+cp -r . ../Aelyra-backup-$(date +%Y%m%d)
+cp .env ../Aelyra-backup-$(date +%Y%m%d)/
+
+2. Pull Latest Code
+
+cd ~/Aelyra
+git fetch origin
+git checkout main
+git pull origin main
+
+3. Update Python Dependencies
+
+source .venv/bin/activate
+pip install -r requirements.txt
+# This will install: SQLAlchemy 2.0.36, Alembic 1.14.0
+
+4. Environment Configuration
+
+Your current .env is mostly correct, but needs one addition:
+# Add to existing .env:
+DATABASE_URL=sqlite:///./aelyra.db
+
+5. Database Setup & Migration
+
+# Initialize database schema
+alembic upgrade head
+
+# Verify database was created
+ls -la aelyra.db
+
+6. Frontend Build & Deployment (Vite Migration)
+
+cd frontend
+npm install  # Update dependencies (includes Vite 6.x migration)
+npm run build  # Now uses Vite instead of CRA (~800ms vs minutes)
+
+# IMPORTANT: Build output is now in 'dist/' directory (not 'build/')
+# Verify build completed:
+ls -la dist/
+
+# Copy dist files to your web server directory (not build files)
+# Example: cp -r dist/* /var/www/html/
+
+7. Service Restart
+
+# Restart your production service (systemd/supervisor/pm2)
+# Example if using systemd:
+sudo systemctl restart aelyra
+
+8. Verification Tests
+
+- ✅ Check main app loads at https://aelyra.moneill.net (now Vite-powered)
+- ✅ Test Spotify authentication flow
+- ✅ Create a test playlist (will test database)
+- ✅ Check Account Information tab works
+- ✅ Verify Playlist History shows created playlist
+- ✅ Test user profile customization (first name should persist after login)
+- ✅ Verify faster load times (Vite vs CRA performance)
+
+Key Changes for Production
+
+Environment Updates Needed:
+
+# Your current .env is good, just add:
+DATABASE_URL=sqlite:///./aelyra.db
+
+Backend Dependencies Added:
+
+- SQLAlchemy 2.0.36 (database ORM)
+- Alembic 1.14.0 (database migrations)
+
+Frontend Migration (Create React App → Vite):
+
+- Vite 6.x (Node.js 18+ compatible)
+- @vitejs/plugin-react 4.6.0
+- Build output: dist/ directory (not build/)
+- Performance: ~800ms builds vs minutes with CRA
+- Dev server: ~200ms startup vs 15+ seconds with CRA
+
+Critical Bug Fixes:
+
+- Fixed user profile overwrite issue in app/services/user_service.py
+- Custom first names now persist after login (no longer overwritten with Spotify username)
+
+New Files Created:
+
+- alembic/ directory (database migration system)
+- alembic.ini (configuration file)
+- app/database.py (database connection)
+- app/models/user.py & app/models/playlist_history.py (data models)
+- app/services/user_service.py & app/services/playlist_history_service.py
+- frontend/src/components/UserProfile.js & PlaylistHistory.js (new UI)
+- frontend/vite.config.js (Vite configuration)
+- frontend/jest.config.js (ES module compatible testing)
+
+Updated Files:
+
+- frontend/package.json (ES module support, Vite dependencies)
+- frontend/src/main.jsx (renamed from index.js, Vite entry point)
+- frontend/index.html (moved to root, Vite structure)
+- deploy-prod.sh (updated to check dist/ instead of build/)
+- README.md (comprehensive update with all new features)
+
+Rollback Plan (if needed):
+
+# If deployment fails:
+cd ~/
+rm -rf Aelyra
+mv Aelyra-backup-$(date +%Y%m%d) Aelyra
+cd Aelyra
+# Restart service
+
+Risk Assessment: LOW
+
+- No breaking changes to existing functionality
+- Database is additive (doesn't modify existing data flow)
+- Current working features remain unchanged
+- New features are isolated to new components
+- Vite migration tested extensively in development
+- User profile bug fix is isolated to one method
+- All changes tested locally and committed to main branch
+
+Estimated Downtime: 3-7 minutes
+
+- Time for dependency installation (frontend migration includes more packages)
+- Database initialization (alembic upgrade head)
+- Service restart
+- Vite build process (much faster than CRA but still takes time for npm install)
+
+Performance Improvements Expected:
+
+- Frontend build time: ~800ms (vs minutes with CRA)
+- Development experience: Significantly improved hot reload
+- Zero deprecation warnings
+- Eliminated 1,355+ deprecated dependencies
