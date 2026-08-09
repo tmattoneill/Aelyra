@@ -1,9 +1,5 @@
 # Dev Only
 wireframes/
-deploy-prod.sh
-prod-deploy-plan.txt 
-CLAUDE.md
-claude.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -16,18 +12,19 @@ __pycache__/
 # Distribution / packaging
 .DS_Store
 .Python
-build/
-develop-eggs/
+# Anchored to repo root so they don't swallow source dirs like frontend/src/lib
+/build/
+/develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+/downloads/
+/eggs/
+/.eggs/
+/lib/
+/lib64/
+/parts/
+/sdist/
+/var/
+/wheels/
 share/python-wheels/
 *.egg-info/
 .installed.cfg
@@ -41,7 +38,7 @@ MANIFEST
 *.spec
 
 # Node
-package-lock.json
+# package-lock.json is tracked deliberately: deploys run `npm ci` for reproducible builds
 node_modules/
 
 # Installer logs
@@ -79,6 +76,16 @@ db.sqlite3-journal
 
 # Aelyra Database
 aelyra.db
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Agent / editor tooling
+.claude/
+.devctx/
+.replit
+replit.nix
 
 # Flask stuff:
 instance/
@@ -139,9 +146,12 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env
-.env.dev
-.env.prod
+# Catch every .env variant (.env, .env.dev, .env.prod, frontend/.env) but keep the templates
+.env*
+!.env.example
+!*.env.example
+# Deployment target details (server IP, ssh port) — keep out of the public repo
+.deploy.env
 .venv
 env/
 venv/
@@ -149,8 +159,8 @@ ENV/
 env.bak/
 venv.bak/
 
-# Config files
-.config/
+# .config/ holds the OpenAI prompt templates. They are required at boot
+# (openai_service raises without them) and contain no secrets, so they stay tracked.
 
 # SSL Certificates
 certs/
