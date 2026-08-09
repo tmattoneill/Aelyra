@@ -1,0 +1,23 @@
+[Unit]
+Description=Aleyra FastAPI backend
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Aelyra
+EnvironmentFile=/home/ubuntu/Aelyra/.env
+ExecStart=/home/ubuntu/Aelyra/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8100
+Restart=always
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+
+# This unit is the real deployment contract and previously existed only on the
+# server. Install with:
+#   sudo cp deploy/aelyra.service /etc/systemd/system/aelyra.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now aelyra
+#
+# Note it reads .env (not .env.prod) and sets the port on the ExecStart line,
+# so PORT in the env file is ignored. utils/deploy-prod.sh reads the port to
+# health-check from REMOTE_HEALTH_URL in .deploy.env.

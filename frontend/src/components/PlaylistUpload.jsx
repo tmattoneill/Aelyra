@@ -37,6 +37,7 @@ export default function PlaylistUpload({ onTokenExpired }) {
   const [fileContent, setFileContent] = useState('');
   const [preview, setPreview] = useState(null);
   const [customName, setCustomName] = useState('');
+  const [isPublic, setIsPublic] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
@@ -91,6 +92,7 @@ export default function PlaylistUpload({ onTokenExpired }) {
       const { data } = await api.post('/api/upload-playlist', {
         m3u_content: fileContent,
         custom_name: customName.trim() || null,
+        public: isPublic,
       });
       setResult(data);
     } catch (err) {
@@ -213,6 +215,21 @@ export default function PlaylistUpload({ onTokenExpired }) {
               maxLength={200}
             />
           </div>
+
+          <label
+            style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '0 0 20px' }}
+            htmlFor="upload-public"
+          >
+            <input
+              id="upload-public"
+              type="checkbox"
+              className="track-checkbox"
+              style={{ margin: 0 }}
+              checked={isPublic}
+              onChange={(e) => setIsPublic(e.target.checked)}
+            />
+            <span>Show on my Spotify profile</span>
+          </label>
 
           <div className="btn-row">
             <button type="button" className="btn" onClick={upload}>

@@ -17,8 +17,8 @@ from app.models.requests import (
     UploadPlaylistRequest,
 )
 from app.models.responses import GeneratePlaylistResponse
+from app.services.llm_service import LLMService, QueryAnalysis
 from app.services.m3u_parser import M3UParser
-from app.services.openai_service import OpenAIService, QueryAnalysis
 from app.services.playlist_history_service import PlaylistHistoryService
 from app.services.spotify_service import SpotifyService
 from app.services.user_service import UNSET, UserService
@@ -173,7 +173,7 @@ def _format_spotify_tracks(spotify_tracks: List[Dict]) -> List[Dict]:
 
 
 async def _refill_tracks(
-    openai_service: OpenAIService,
+    llm_service: LLMService,
     spotify_service: SpotifyService,
     analysis: QueryAnalysis,
     found_tracks: List[Dict],
@@ -201,7 +201,7 @@ async def _refill_tracks(
             existing_as_suggestions = [
                 {"track_name": t.get("title"), "artist": t.get("artist")} for t in tracks
             ]
-            replacements = await openai_service.generate_tracks_from_analysis(
+            replacements = await llm_service.generate_tracks_from_analysis(
                 analysis,
                 needed,
                 existing_tracks=existing_as_suggestions,
@@ -241,10 +241,10 @@ async def generate_playlist(
     suggestion against Spotify.
     """
     try:
-        openai_service = OpenAIService()
+        llm_service = LLMService()
         spotify_service = SpotifyService(token)
 
-        suggested_tracks, analysis = await openai_service.generate_playlist_agentic(
+        suggested_tracks, analysis = await llm_service.generate_playlist_agentic(
             query=request.query,
             track_count=request.track_count,
         )
@@ -256,12 +256,12 @@ async def generate_playlist(
 
         if len(spotify_tracks) < request.track_count:
             spotify_tracks = await _refill_tracks(
-                openai_service, spotify_service, analysis,
+                llm_service, spotify_service, analysis,
                 spotify_tracks, unmatched, request.track_count,
             )
 
         formatted_tracks = _format_spotify_tracks(spotify_tracks[:request.track_count])
-        playlist_name = await openai_service.generate_playlist_title(request.query)
+        playlist_name = await llm_service.generate_playlist_title(request.query)
 
         if len(formatted_tracks) < request.track_count:
             logger.info(
@@ -295,13 +295,13 @@ async def generate_playlist_stream(
 
     async def generate_with_progress() -> AsyncGenerator[str, None]:
         try:
-            openai_service = OpenAIService()
+            llm_service = LLMService()
             spotify_service = SpotifyService(token)
 
             # PASS 1: analyse the query
             yield await sse({'type': 'pass_start', 'pass': 'analyze',
                              'message': 'Analyzing your music preferences...'})
-            analysis = await openai_service.analyze_query(request.query)
+            analysis = await llm_service.analyze_query(request.query)
             genres_str = ', '.join(analysis.genres[:3]) if analysis.genres else 'various genres'
             moods_str = ', '.join(analysis.moods[:2]) if analysis.moods else 'mixed moods'
             yield await sse({'type': 'pass_complete', 'pass': 'analyze',
@@ -310,7 +310,7 @@ async def generate_playlist_stream(
             # PASS 2: generate suggestions
             yield await sse({'type': 'pass_start', 'pass': 'generate',
                              'message': f'Generating {request.track_count} track recommendations...'})
-            suggested_tracks = await openai_service.generate_tracks_from_analysis(
+            suggested_tracks = await llm_service.generate_tracks_from_analysis(
                 analysis, request.track_count
             )
             yield await sse({'type': 'pass_complete', 'pass': 'generate',
@@ -319,7 +319,7 @@ async def generate_playlist_stream(
             # PASS 3: diversity
             yield await sse({'type': 'pass_start', 'pass': 'validate',
                              'message': 'Validating playlist diversity...'})
-            diversity_report = openai_service.validate_diversity(suggested_tracks, analysis)
+            diversity_report = llm_service.validate_diversity(suggested_tracks, analysis)
             if diversity_report.is_valid:
                 yield await sse({'type': 'pass_complete', 'pass': 'validate',
                                  'message': 'Diversity check passed'})
@@ -327,10 +327,10 @@ async def generate_playlist_stream(
                 issue_msg = diversity_report.issues[0] if diversity_report.issues else "diversity issues"
                 yield await sse({'type': 'pass_progress', 'pass': 'validate',
                                  'message': f'Fixing: {issue_msg}'})
-                suggested_tracks = openai_service.apply_diversity_fixes(suggested_tracks)
+                suggested_tracks = llm_service.apply_diversity_fixes(suggested_tracks)
                 if len(suggested_tracks) < request.track_count:
                     needed = request.track_count - len(suggested_tracks)
-                    replacements = await openai_service.generate_replacement_tracks(
+                    replacements = await llm_service.generate_replacement_tracks(
                         analysis, needed, suggested_tracks, diversity_report.artist_violations
                     )
                     suggested_tracks.extend(replacements[:needed])
@@ -381,14 +381,14 @@ async def generate_playlist_stream(
             if len(spotify_tracks) < request.track_count:
                 yield await sse({'type': 'status', 'message': 'Looking for a few more tracks...'})
                 spotify_tracks = await _refill_tracks(
-                    openai_service, spotify_service, analysis,
+                    llm_service, spotify_service, analysis,
                     spotify_tracks, unmatched, request.track_count,
                 )
 
             formatted_tracks = _format_spotify_tracks(spotify_tracks[:request.track_count])
 
             yield await sse({'type': 'status', 'message': 'Creating playlist title...'})
-            playlist_name = await openai_service.generate_playlist_title(request.query)
+            playlist_name = await llm_service.generate_playlist_title(request.query)
 
             # Say so when the playlist is short rather than quietly padding it.
             if len(formatted_tracks) < request.track_count:
@@ -499,9 +499,21 @@ async def create_playlist(
         spotify_service = SpotifyService(token)
         user_profile = await spotify_service.get_user_profile()
 
+        description = request.description
+        if not description:
+            # Summarise what is actually in the playlist rather than echoing the
+            # prompt, which read badly and used to overflow Spotify's limit.
+            try:
+                tracks = await spotify_service.get_tracks_details(request.track_ids[:30])
+                description = await LLMService().generate_playlist_description(
+                    request.query or request.name, tracks
+                )
+            except Exception as e:
+                logger.warning(f"Falling back to a default description: {e}")
+                description = "Generated by Aelyra"
+
         playlist = await spotify_service.create_playlist(
-            request.name,
-            request.description or "Generated by Aelyra",
+            request.name, description, public=request.public
         )
 
         if request.track_ids:
@@ -710,13 +722,13 @@ async def upload_playlist(
             playlist_name = request.custom_name.strip()
         else:
             try:
-                openai_service = OpenAIService()
+                llm_service = LLMService()
                 sample_artists = list(dict.fromkeys(t['artist'] for t in valid_tracks[:10]))
                 query = (
                     f"A playlist of {len(valid_track_ids)} tracks featuring artists like "
                     f"{', '.join(sample_artists[:5])}"
                 )
-                playlist_name = await openai_service.generate_playlist_title(query)
+                playlist_name = await llm_service.generate_playlist_title(query)
             except Exception as e:
                 logger.warning(f"Failed to generate playlist name, using fallback: {e}")
                 playlist_name = "Uploaded Playlist"
@@ -725,6 +737,7 @@ async def upload_playlist(
             playlist = await spotify_service.create_playlist(
                 playlist_name,
                 f"Uploaded via Aelyra from M3U file ({len(valid_track_ids)} tracks)",
+                public=request.public,
             )
             await spotify_service.add_tracks_to_playlist(playlist["id"], valid_track_ids)
         except httpx.HTTPStatusError as e:

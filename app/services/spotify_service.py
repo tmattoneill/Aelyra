@@ -154,14 +154,19 @@ class SpotifyService:
             return value
         return value[: limit - 1].rstrip() + "…"
 
-    async def create_playlist(self, name: str, description: str = "") -> Dict:
+    async def create_playlist(self, name: str, description: str = "", public: bool = False) -> Dict:
         """
-        Create a new playlist for the user
+        Create a new playlist for the user.
+
+        Spotify's `public` flag controls whether the playlist is listed on the
+        user's profile. A playlist created with public=False is still reachable
+        by anyone holding its link, which is why the UI says "on your profile"
+        rather than promising secrecy.
         """
         data = {
             "name": self._clamp(name, self.MAX_PLAYLIST_NAME) or "Aelyra Playlist",
             "description": self._clamp(description, self.MAX_PLAYLIST_DESCRIPTION),
-            "public": False,
+            "public": public,
         }
 
         async with httpx.AsyncClient() as client:

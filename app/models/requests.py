@@ -15,7 +15,12 @@ class GeneratePlaylistRequest(BaseModel):
 class CreatePlaylistRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     track_ids: list[str] = Field(max_length=500)
-    description: Optional[str] = Field(default=None, max_length=1000)
+    # Omit to have one written from the playlist's contents.
+    description: Optional[str] = Field(default=None, max_length=300)
+    # The app used to decide visibility silently; now the user chooses.
+    public: bool = False
+    # Echoed back into the description generator so it can describe the brief.
+    query: Optional[str] = Field(default=None, max_length=2000)
 
 
 class UpdateProfileRequest(BaseModel):
@@ -28,6 +33,7 @@ class UpdateProfileRequest(BaseModel):
 
 
 class UploadPlaylistRequest(BaseModel):
+    public: bool = False
     # Bounded here so an oversized body is rejected before it is deserialised;
     # M3UParser applies the same limit for non-HTTP callers.
     m3u_content: str = Field(max_length=100_000)
