@@ -61,6 +61,29 @@ class SpotifyService:
             "Content-Type": "application/json"
         }
 
+    @staticmethod
+    def _raise_for_status(response: httpx.Response, action: str) -> None:
+        """Raise on an error response, logging what Spotify actually said.
+
+        raise_for_status alone reports only the status code, and the previous
+        code then wrapped it in a plain Exception. That threw away both the
+        response body, which carries Spotify's reason for a 400, and the status
+        code itself, so callers could not tell an expired token from a bad
+        request and every failure surfaced as a 500.
+        """
+        if response.is_success:
+            return
+
+        detail = ""
+        try:
+            payload = response.json()
+            detail = payload.get("error", {}).get("message") or str(payload)
+        except Exception:
+            detail = response.text[:500]
+
+        logger.error(f"Spotify refused to {action}: {response.status_code} {detail}")
+        response.raise_for_status()
+
     @cache_response(ttl=300)  # Cache search results for 5 minutes
     async def search_track(self, query: str, limit: int = 5) -> List[Dict]:
         """
@@ -80,7 +103,7 @@ class SpotifyService:
                     params=params,
                     timeout=10.0
                 )
-                response.raise_for_status()
+                self._raise_for_status(response, "search tracks")
                 data = response.json()
 
             tracks = []
@@ -98,79 +121,76 @@ class SpotifyService:
 
             return tracks
 
+        except httpx.HTTPStatusError:
+            # Let the status code reach the router so 401 and 429 can be
+            # translated into the right response instead of a blanket 500.
+            raise
         except httpx.HTTPError as e:
-            logger.error(f"Spotify search error: {str(e)}")
-            raise Exception(f"Failed to search Spotify: {str(e)}")
-        except Exception as e:
-            logger.error(f"Unexpected error in search_track: {str(e)}")
-            raise Exception(f"Failed to search Spotify: {str(e)}")
+            logger.error(f"Spotify search transport error: {e}")
+            raise
 
     async def get_user_profile(self) -> Dict:
         """
         Get current user's profile
         """
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{self.base_url}/me",
-                    headers=self.headers,
-                    timeout=10.0
-                )
-                response.raise_for_status()
-                return response.json()
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.base_url}/me",
+                headers=self.headers,
+                timeout=10.0
+            )
+            self._raise_for_status(response, "read the user profile")
+            return response.json()
 
-        except httpx.HTTPError as e:
-            logger.error(f"Failed to get user profile: {str(e)}")
-            raise Exception(f"Failed to get user profile: {str(e)}")
+    # Spotify rejects the whole request with a bare 400 if either field is over
+    # length, so they are clamped here rather than relied on upstream.
+    MAX_PLAYLIST_NAME = 100
+    MAX_PLAYLIST_DESCRIPTION = 300
+
+    @staticmethod
+    def _clamp(value: str, limit: int) -> str:
+        value = (value or "").strip()
+        if len(value) <= limit:
+            return value
+        return value[: limit - 1].rstrip() + "…"
 
     async def create_playlist(self, name: str, description: str = "") -> Dict:
         """
         Create a new playlist for the user
         """
-        try:
-            data = {
-                "name": name,
-                "description": description,
-                "public": False
-            }
+        data = {
+            "name": self._clamp(name, self.MAX_PLAYLIST_NAME) or "Aelyra Playlist",
+            "description": self._clamp(description, self.MAX_PLAYLIST_DESCRIPTION),
+            "public": False,
+        }
 
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{self.base_url}/me/playlists",
-                    headers=self.headers,
-                    json=data,
-                    timeout=15.0
-                )
-                response.raise_for_status()
-                return response.json()
-
-        except httpx.HTTPError as e:
-            logger.error(f"Failed to create playlist: {str(e)}")
-            raise Exception(f"Failed to create playlist: {str(e)}")
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.base_url}/me/playlists",
+                headers=self.headers,
+                json=data,
+                timeout=15.0
+            )
+            self._raise_for_status(response, "create playlist")
+            return response.json()
 
     async def add_tracks_to_playlist(self, playlist_id: str, track_ids: List[str]) -> Dict:
         """
-        Add tracks to a playlist
+        Add tracks to a playlist, 100 at a time (Spotify's per-request limit)
         """
-        try:
-            # Convert track IDs to Spotify URIs
-            uris = [f"spotify:track:{track_id}" for track_id in track_ids]
-
-            data = {"uris": uris}
-
-            async with httpx.AsyncClient() as client:
+        result = {}
+        async with httpx.AsyncClient() as client:
+            for start in range(0, len(track_ids), 100):
+                uris = [f"spotify:track:{tid}" for tid in track_ids[start:start + 100]]
                 response = await client.post(
                     f"{self.base_url}/playlists/{playlist_id}/tracks",
                     headers=self.headers,
-                    json=data,
+                    json={"uris": uris},
                     timeout=15.0
                 )
-                response.raise_for_status()
-                return response.json()
-
-        except httpx.HTTPError as e:
-            logger.error(f"Failed to add tracks to playlist: {str(e)}")
-            raise Exception(f"Failed to add tracks to playlist: {str(e)}")
+                self._raise_for_status(response, "add tracks to the playlist")
+                result = response.json()
+        return result
 
     @cache_response(ttl=3600, use_track_cache=True)  # Cache track details for 1 hour
     async def get_tracks_details(self, track_ids: List[str]) -> List[Dict]:
@@ -192,7 +212,7 @@ class SpotifyService:
                         params=params,
                         timeout=10.0
                     )
-                    response.raise_for_status()
+                    self._raise_for_status(response, "read track details")
 
                     data = response.json()
 
@@ -209,6 +229,8 @@ class SpotifyService:
 
             return track_data
 
+        except httpx.HTTPStatusError:
+            raise
         except httpx.HTTPError as e:
-            logger.error(f"Failed to get track details: {str(e)}")
-            raise Exception(f"Failed to get track details: {str(e)}")
+            logger.error(f"Transport error reading track details: {e}")
+            raise
