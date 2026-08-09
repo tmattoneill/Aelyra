@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main, fable-review]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test
+        run: pytest -q
+        env:
+          # The suite mocks every outbound call; these only satisfy the config
+          # that is read at import time.
+          DATABASE_URL: sqlite:///:memory:
+          SPOTIFY_CLIENT_ID: test-client-id
+          SPOTIFY_CLIENT_SECRET: test-client-secret
+          OPENAI_API_KEY: test-key
+
+      - name: Check models and migrations agree
+        run: |
+          alembic upgrade head
+          alembic check
+        env:
+          DATABASE_URL: sqlite:///./ci.db
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # ci, not install: the lockfile is tracked so builds are reproducible.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
