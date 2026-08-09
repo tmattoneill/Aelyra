@@ -1,59 +1,71 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
+# Starts the backend and frontend development servers together.
+# Ctrl+C stops both.
 
-# Aelyra Development Launcher
-# Starts both backend and frontend development servers
+set -euo pipefail
 
-echo "🚀 Starting Aelyra Development Environment..."
-echo ""
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
 
-# Check if .env exists
 if [ ! -f .env ]; then
-    echo "Error: .env file not found!"
-    echo "Please copy .env.example to .env and configure your API keys"
+    echo "❌ .env not found. Copy .env.example to .env and fill in your API keys." >&2
     exit 1
 fi
 
-# Check if virtual environment should be activated
-if [ -d "venv" ]; then
-    echo "Activating virtual environment..."
+if [ -f venv/bin/activate ]; then
+    # shellcheck disable=SC1091
     source venv/bin/activate
+else
+    echo "⚠️  No venv found. Create one with: uv venv --python 3.12 venv" >&2
 fi
 
-# Function to cleanup background processes on exit
+if [ ! -d frontend/node_modules ]; then
+    echo "📦 Installing frontend dependencies..."
+    (cd frontend && npm install)
+fi
+
+BACKEND_PID=""
+FRONTEND_PID=""
+
 cleanup() {
     echo ""
-    echo "Shutting down servers..."
-    kill $BACKEND_PID $FRONTEND_PID 2>/dev/null
-    wait $BACKEND_PID $FRONTEND_PID 2>/dev/null
-    echo "Servers stopped"
+    echo "Shutting down..."
+    [ -n "$BACKEND_PID" ] && kill "$BACKEND_PID" 2>/dev/null || true
+    [ -n "$FRONTEND_PID" ] && kill "$FRONTEND_PID" 2>/dev/null || true
+    wait 2>/dev/null || true
     exit 0
 }
-
 trap cleanup SIGINT SIGTERM
 
-# Start backend
-echo "Starting Python backend on http://127.0.0.1:5988..."
+echo "🐍 Starting backend on http://127.0.0.1:5988"
 python main.py &
 BACKEND_PID=$!
 
-# Wait a moment for backend to start
-sleep 2
+# Poll the health endpoint rather than sleeping a fixed two seconds and hoping.
+printf "   waiting for backend"
+for _ in $(seq 1 30); do
+    if curl -fsS --max-time 1 http://127.0.0.1:5988/health >/dev/null 2>&1; then
+        echo " ready"
+        break
+    fi
+    if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
+        echo ""
+        echo "❌ Backend exited during startup. Check the output above." >&2
+        exit 1
+    fi
+    printf "."
+    sleep 1
+done
 
-# Start frontend
-echo " Starting React frontend on http://localhost:3000..."
-cd frontend
-npm run dev &
+echo "⚛️  Starting frontend on http://localhost:3000"
+(cd frontend && npm run dev) &
 FRONTEND_PID=$!
-cd ..
 
 echo ""
-echo "✅ Development servers started!"
-echo ""
-echo "📍 Backend:  http://127.0.0.1:5988"
-echo "📍 Frontend: http://localhost:3000"
-echo ""
-echo "Press Ctrl+C to stop both servers"
+echo "✅ Running. Press Ctrl+C to stop both."
+echo "   Backend:  http://127.0.0.1:5988"
+echo "   Frontend: http://localhost:3000"
 echo ""
 
-# Wait for either process to exit
-wait $BACKEND_PID $FRONTEND_PID
+wait

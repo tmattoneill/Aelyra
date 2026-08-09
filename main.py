@@ -20,6 +20,12 @@ logging.basicConfig(
     level=logging.DEBUG if DEBUG else logging.INFO,
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
+
+# At DEBUG these libraries log full request bodies and every header, which
+# buries the application's own output and puts API keys in the log file.
+for noisy in ("httpx", "httpcore", "openai", "urllib3"):
+    logging.getLogger(noisy).setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
