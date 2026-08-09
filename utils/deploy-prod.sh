@@ -100,10 +100,25 @@ ssh -p "${REMOTE_PORT}" "${REMOTE_USER}@${REMOTE_HOST}" "${REMOTE_RESTART_CMD}"
 
 echo ""
 echo "🩺 Health check..."
-if ssh -p "${REMOTE_PORT}" "${REMOTE_USER}@${REMOTE_HOST}" \
-    "curl -fsS --max-time 10 http://127.0.0.1:\${PORT:-8000}/health" >/dev/null 2>&1; then
-    echo "✅ Deployment complete and service is healthy."
-else
-    echo "⚠️  Deployed, but the health check did not pass. Check the service logs." >&2
-    exit 1
-fi
+# The port comes from .deploy.env because the systemd unit sets it on the
+# uvicorn command line, so it is not readable from the app's own env file.
+HEALTH_URL="${REMOTE_HEALTH_URL:-http://127.0.0.1:8100/health}"
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if RESPONSE=$(ssh -p "${REMOTE_PORT}" "${REMOTE_USER}@${REMOTE_HOST}" \
+        "curl -fsS --max-time 5 ${HEALTH_URL}" 2>/dev/null); then
+        echo "   $RESPONSE"
+        case "$RESPONSE" in
+            *'"status":"healthy"'*)
+                echo "✅ Deployment complete and the service is healthy."
+                exit 0 ;;
+            *)
+                echo "⚠️  Service is up but reports degraded. Check the values above." >&2
+                exit 1 ;;
+        esac
+    fi
+    sleep 2
+done
+
+echo "⚠️  Deployed, but the service did not answer its health check." >&2
+echo "    Check: ssh -p ${REMOTE_PORT} ${REMOTE_USER}@${REMOTE_HOST} 'journalctl -u aelyra -n 50'" >&2
+exit 1
