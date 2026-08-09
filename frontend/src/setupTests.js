@@ -8,5 +8,6 @@ if (!global.TextDecoder) {
 }
 
 beforeEach(() => {
+  localStorage.clear();
   sessionStorage.clear();
 });

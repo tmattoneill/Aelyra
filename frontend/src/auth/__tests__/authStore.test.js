@@ -52,3 +52,12 @@ describe('authStore', () => {
     expect(getAccessToken()).toBeNull();
   });
 });
+
+describe('persistence', () => {
+  it('survives a tab close, which sessionStorage did not', () => {
+    saveSession({ access_token: 'abc', refresh_token: 'r', expires_in: 3600 });
+    // sessionStorage is cleared when the tab closes; localStorage is not.
+    sessionStorage.clear();
+    expect(getAccessToken()).toBe('abc');
+  });
+});

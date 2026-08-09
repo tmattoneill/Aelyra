@@ -1,12 +1,38 @@
 /**
- * Session storage for the Spotify session.
+ * Storage for the Spotify session.
  *
  * Everything lives under one key so the token, its expiry and the user profile
- * cannot drift apart. sessionStorage (not localStorage) keeps the scope to the
- * tab, so closing it ends the session.
+ * cannot drift apart.
+ *
+ * localStorage, so the session survives closing the tab and restarting the
+ * browser. Access tokens last an hour, but the stored refresh token renews them
+ * silently, so in practice you stay logged in until you disconnect or Spotify
+ * revokes the grant. sessionStorage made you reconnect every time the tab
+ * closed, for no security gain worth having: both are readable by any script on
+ * the page, so the meaningful hardening is httpOnly cookies, not a shorter
+ * lifetime on the same storage.
  */
 
 const STORAGE_KEY = 'aelyra_auth';
+
+// Where the session lives. Falls back to an in-memory shim when storage is
+// unavailable (private mode, blocked cookies) so the app degrades to a
+// single-page session rather than throwing on every read.
+const memoryFallback = new Map();
+const store = (() => {
+  try {
+    const probe = '__aelyra_probe__';
+    window.localStorage.setItem(probe, '1');
+    window.localStorage.removeItem(probe);
+    return window.localStorage;
+  } catch {
+    return {
+      getItem: (k) => memoryFallback.get(k) ?? null,
+      setItem: (k, v) => memoryFallback.set(k, v),
+      removeItem: (k) => memoryFallback.delete(k),
+    };
+  }
+})();
 
 // Refresh this far ahead of the real expiry so a request in flight when the
 // token lapses does not fail.
@@ -16,7 +42,7 @@ let listeners = [];
 
 function read() {
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
+    const raw = store.getItem(STORAGE_KEY);
     return raw ? JSON.parse(raw) : null;
   } catch {
     // Corrupt or unreadable storage should log the user out, not crash the app.
@@ -58,7 +84,7 @@ export function saveSession({ access_token, refresh_token, expires_in, user }) {
     expires_at: Date.now() + (expires_in ?? 3600) * 1000,
     user: user ?? existing?.user ?? null,
   };
-  sessionStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+  store.setItem(STORAGE_KEY, JSON.stringify(session));
   return session;
 }
 
@@ -69,12 +95,12 @@ export function updateUser(patch) {
   const session = read();
   if (!session) return null;
   session.user = { ...(session.user ?? {}), ...patch };
-  sessionStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+  store.setItem(STORAGE_KEY, JSON.stringify(session));
   return session.user;
 }
 
 export function clearSession() {
-  sessionStorage.removeItem(STORAGE_KEY);
+  store.removeItem(STORAGE_KEY);
 }
 
 /**
